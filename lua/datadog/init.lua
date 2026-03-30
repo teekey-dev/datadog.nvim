@@ -9,11 +9,10 @@ M.config = {
   app_key = "",
   site = "us1", -- us1, us3, us4, us5, eu1, gov
   refresh_interval = 30000, -- 30 seconds in milliseconds
+  service = nil, -- auto-detected from project (package.json, go.mod, etc.)
+  env = nil, -- optional: specify environment (e.g., "production", "staging")
   query = {
     time_range = "1h",
-    filter = {
-      query = "@status:error",
-    },
     limit = 100,
   },
 }

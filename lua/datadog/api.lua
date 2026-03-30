@@ -161,6 +161,7 @@ end
 -- Fetch error tracking issues from Datadog
 function M:fetch_errors(callback)
   -- Build filter query with service and environment
+  -- Error Tracking API doesn't use @status:error - it already queries errors
   local service_filter = ""
   if self.config.service and self.config.service ~= "" then
     service_filter = "service:" .. self.config.service
@@ -171,13 +172,10 @@ function M:fetch_errors(callback)
     env_filter = "env:" .. self.config.env
   end
   
-  -- Combine filters
+  -- Combine filters (only service and env for Error Tracking)
   local filters = {}
   if service_filter ~= "" then table.insert(filters, service_filter) end
   if env_filter ~= "" then table.insert(filters, env_filter) end
-  if self.config.query and self.config.query.filter and self.config.query.filter.query then
-    table.insert(filters, self.config.query.filter.query)
-  end
   
   local query_string = table.concat(filters, " ")
   if query_string == "" then
