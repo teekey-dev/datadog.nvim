@@ -31,7 +31,7 @@ end
 
 -- Set up key mappings for the buffer
 function M.setup_mappings(bufnr)
-  local opts = { noremap = true, silent = true, buffer = bufnr }
+  local opts = { noremap = true, silent = true }
   
   -- Navigate to source file on Enter
   vim.api.nvim_buf_set_keymap(bufnr, 'n', '<CR>', 
