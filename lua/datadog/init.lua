@@ -12,7 +12,7 @@ M.config = {
   service = nil, -- auto-detected from project (package.json, go.mod, etc.)
   env = nil, -- optional: specify environment (e.g., "production", "staging")
   query = {
-    time_range = "1h",
+    time_range = "1w",
     limit = 100,
   },
 }
