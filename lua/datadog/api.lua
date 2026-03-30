@@ -179,7 +179,7 @@ function M:fetch_errors(callback)
   
   print("[Datadog API] Full Query: " .. vim.json.encode(request_body))
   
-  self:_request("POST", "error-tracking/issues/search", query, function(response, err)
+  self:_request("POST", "error-tracking/issues/search", request_body, function(response, err)
     if err then
       print("[Datadog API] fetch_errors error: " .. vim.json.encode(err))
       if callback then
