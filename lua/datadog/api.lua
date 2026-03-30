@@ -14,6 +14,9 @@ M.base_url = "https://api.datadoghq.com/api/v2"
 function M.new(config)
   local self = setmetatable({}, { __index = M })
   self.config = config or {}
+  -- Set base URL based on site config
+  local site = self.config.site or "us1"
+  self.base_url = string.format("https://api.%s.datadoghq.com/api/v2", site)
   return self
 end
 
@@ -147,7 +150,7 @@ function M:fetch_errors(callback)
   
   print("[Datadog API] Full Query: " .. vim.json.encode(query))
   
-  self:_request("POST", "error-tracking/queries", query, function(response, err)
+  self:_request("POST", "error-tracking/issues/search", query, function(response, err)
     if err then
       print("[Datadog API] fetch_errors error: " .. vim.json.encode(err))
       if callback then
