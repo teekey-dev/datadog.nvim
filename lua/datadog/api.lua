@@ -36,6 +36,12 @@ function M:_request(method, endpoint, data, callback)
   local url = self:_build_url(endpoint)
   local headers = self:_build_headers()
   
+  -- DEBUG: Print request details
+  print(string.format("[Datadog API] Request: %s %s", method, url))
+  if data then
+    print("[Datadog API] Request body: " .. vim.json.encode(data))
+  end
+  
   local args = {
     "-X", method,
     "-H", "DD-API-KEY:" .. self.config.api_key,
@@ -51,6 +57,9 @@ function M:_request(method, endpoint, data, callback)
     table.insert(args, vim.json.encode(data))
   end
   
+  -- DEBUG: Print curl command
+  print("[Datadog API] curl " .. table.concat(args, " "))
+  
   Job:new({
     command = "curl",
     args = args,
@@ -58,6 +67,7 @@ function M:_request(method, endpoint, data, callback)
       if return_val ~= 0 then
         local stderr = table.concat(j:stderr_result(), "\n")
         vim.notify(string.format("Datadog API error: %s", stderr), vim.log.levels.ERROR)
+        print("[Datadog API] Error: " .. stderr)
         if callback then
           callback(nil, { error = stderr })
         end
@@ -65,8 +75,26 @@ function M:_request(method, endpoint, data, callback)
       end
       
       local result = table.concat(j:result(), "")
+      
+      -- DEBUG: Print raw response
+      print("[Datadog API] Raw response length: " .. #result)
+      print("[Datadog API] Raw response: " .. result)
+      
       local parsed
       pcall(function() parsed = vim.json.decode(result) end)
+      
+      -- DEBUG: Print parsed response structure
+      if parsed then
+        if parsed.data then
+          print("[Datadog API] Response has " .. #parsed.data .. " items in data")
+        elseif parsed.errors then
+          print("[Datadog API] Response errors: " .. vim.json.encode(parsed.errors))
+        elseif parsed.message then
+          print("[Datadog API] Response message: " .. parsed.message)
+        end
+      else
+        print("[Datadog API] Failed to parse JSON response")
+      end
       
       if callback then
         callback(parsed, nil)
@@ -93,8 +121,11 @@ function M:fetch_errors(callback)
     query.filter["to"] = "now"
   end
   
+  print("[Datadog API] Query: " .. vim.json.encode(query))
+  
   self:_request("POST", "logs/query", query, function(response, err)
     if err then
+      print("[Datadog API] fetch_errors error: " .. vim.json.encode(err))
       if callback then
         callback(nil, err)
       end
@@ -104,11 +135,17 @@ function M:fetch_errors(callback)
     -- Process and format the response
     local errors = {}
     if response and response.data then
+      print("[Datadog API] Processing " .. #response.data .. " items")
       for _, item in ipairs(response.data) do
-        table.insert(errors, self:_format_error(item))
+        local formatted = self:_format_error(item)
+        table.insert(errors, formatted)
+        print("[Datadog API] Formatted error: " .. vim.json.encode(formatted))
       end
+    else
+      print("[Datadog API] No data in response or empty response")
     end
     
+    print("[Datadog API] Returning " .. #errors .. " errors")
     if callback then
       callback(errors, nil)
     end
