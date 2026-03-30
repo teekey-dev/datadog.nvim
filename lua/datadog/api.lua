@@ -207,7 +207,7 @@ function M:fetch_errors(callback)
         query = query_string,
         from = from_time,
         to = to_time,
-        track = "logs", -- Use "logs" track for error tracking from logs
+        track = "trace", -- Use "trace" track for error tracking
         order_by = "FIRST_SEEN",
       }
     }
