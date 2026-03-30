@@ -134,30 +134,37 @@ function M.refresh_errors()
   -- Fetch errors from API
   local api_client = api.new(require('datadog').config)
   api_client:fetch_errors(function(errors, err)
-    -- Make buffer modifiable temporarily
-    vim.api.nvim_buf_set_option(M.bufnr, 'modifiable', true)
-    
-    if err then
-      vim.api.nvim_buf_set_lines(M.bufnr, 0, -1, false, {
-        " Datadog Error Tracking ",
-        string.rep("─", vim.fn.strwidth(" Datadog Error Tracking ")),
-        "",
-        string.format(" Error fetching data: %s ", err.error or "Unknown error"),
-        "",
-        " Press 'r' to retry ",
-      })
-      return
-    end
-    
-    -- Store errors for navigation
-    M.errors = errors or {}
-    
-    -- Format and display errors
-    local lines = M.format_errors_for_display(M.errors)
-    vim.api.nvim_buf_set_lines(M.bufnr, 0, -1, false, lines)
-    
-    -- Make buffer read-only again
-    vim.api.nvim_buf_set_option(M.bufnr, 'modifiable', false)
+    -- Schedule all UI operations to run on the main event loop
+    vim.schedule(function()
+      if not M.bufnr or not vim.api.nvim_buf_is_valid(M.bufnr) then
+        return
+      end
+      
+      -- Make buffer modifiable temporarily
+      vim.api.nvim_buf_set_option(M.bufnr, 'modifiable', true)
+      
+      if err then
+        vim.api.nvim_buf_set_lines(M.bufnr, 0, -1, false, {
+          " Datadog Error Tracking ",
+          string.rep("─", vim.fn.strwidth(" Datadog Error Tracking ")),
+          "",
+          string.format(" Error fetching data: %s ", err.error or "Unknown error"),
+          "",
+          " Press 'r' to retry ",
+        })
+        return
+      end
+      
+      -- Store errors for navigation
+      M.errors = errors or {}
+      
+      -- Format and display errors
+      local lines = M.format_errors_for_display(M.errors)
+      vim.api.nvim_buf_set_lines(M.bufnr, 0, -1, false, lines)
+      
+      -- Make buffer read-only again
+      vim.api.nvim_buf_set_option(M.bufnr, 'modifiable', false)
+    end)
   end)
 end
 
