@@ -146,7 +146,7 @@ function M:get_git_repository_id()
     
     if url and url ~= "" then
       -- Convert to @git.repository:id format
-      local repo_id = url:gsub("%.git$", ""):gsub("^https?://", "")
+      local repo_id = url:gsub("%.git$", ""):gsub("^https?://", ""):gsub("^git@", "")
       return "@git.repository.id:" .. repo_id
     end
   end
