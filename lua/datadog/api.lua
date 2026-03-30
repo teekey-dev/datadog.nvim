@@ -231,9 +231,13 @@ function M:fetch_errors(callback)
     if response and response.data then
       print("[Datadog API] Processing " .. #response.data .. " error tracking items")
       for _, item in ipairs(response.data) do
-        local formatted = self:_format_error_tracking(item)
-        table.insert(errors, formatted)
-        print("[Datadog API] Formatted error: " .. vim.json.encode(formatted))
+        -- Skip items with no occurrences in current timeframe
+        local total_count = (item.attributes and item.attributes.total_count) or 0
+        if total_count > 0 then
+          local formatted = self:_format_error_tracking(item)
+          table.insert(errors, formatted)
+          print("[Datadog API] Formatted error: " .. vim.json.encode(formatted))
+        end
       end
     else
       print("[Datadog API] No data in response or empty response")
@@ -249,24 +253,30 @@ end
 -- Format raw Datadog Error Tracking entry into our error format
 function M:_format_error_tracking(raw)
   local attributes = raw.attributes or {}
-  local details = attributes.details or {}
+  local relationships = raw.relationships or {}
+  local issue_data = relationships.issue and relationships.issue.data or {}
+  
+  -- Get issue ID from relationships
+  local issue_id = issue_data.id or raw.id
   
   return {
-    id = raw.id,
-    title = details.title or attributes.title or "",
-    message = details.message or attributes.message or "",
-    service = details.service or attributes.service or self.config.service or "unknown",
-    status = details.status or attributes.status or "unknown",
-    environment = details.environment or attributes.environment or self.config.env or "unknown",
-    timestamp = details.first_seen or attributes.first_seen or raw.attributes.timestamp,
-    last_seen = details.last_seen or attributes.last_seen,
-    severity = details.severity or attributes.severity or "unknown",
-    error_source = details.source or attributes.source or "unknown",
-    host = details.host or attributes.host or "unknown",
-    -- Extract file and line information
-    file = details.file or self:_extract_from_stack_trace(details.stack_trace),
-    line = details.line or self:_extract_line_from_stack(details.stack_trace),
-    stack_trace = details.stack_trace or "",
+    id = issue_id,
+    title = attributes.title or "",
+    message = attributes.message or "",
+    service = attributes.service or self.config.service or "unknown",
+    status = attributes.status or "unknown",
+    environment = attributes.environment or self.config.env or "unknown",
+    timestamp = attributes.first_seen or attributes.timestamp,
+    last_seen = attributes.last_seen,
+    severity = attributes.severity or "unknown",
+    error_source = attributes.source or "unknown",
+    host = attributes.host or "unknown",
+    -- Count of occurrences
+    occurrences = attributes.total_count or 1,
+    -- Extract file and line from stack trace
+    file = nil,
+    line = nil,
+    stack_trace = attributes.stack_trace or "",
     -- Number of occurrences
     occurrences = details.occurrence_count or attributes.occurrence_count or 1,
   }
