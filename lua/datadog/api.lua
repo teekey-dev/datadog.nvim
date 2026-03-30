@@ -141,12 +141,18 @@ function M:get_git_repository_id()
   -- Try to get remote origin URL
   local handle = io.popen("cd " .. vim.fn.shellescape(cwd) .. " && git remote get-url origin 2>/dev/null")
   if handle then
-    local url = handle:read("*a"):gsub("%s+$", "")
+    local url = handle:read("*a")
     handle:close()
     
     if url and url ~= "" then
+      -- Trim whitespace from both ends
+      url = url:match("^%s*(.-)%s*$")
+      
+      -- Convert SSH format (git@host:repo) to standard format (host/repo)
+      url = url:gsub("^git@", ""):gsub(":", "/")
+      
       -- Convert to @git.repository:id format
-      local repo_id = url:gsub("%.git$", ""):gsub("^https?://", ""):gsub("^git@", "")
+      local repo_id = url:gsub("%.git$", ""):gsub("^https?://", "")
       return "@git.repository.id:" .. repo_id
     end
   end
@@ -175,7 +181,7 @@ function M:fetch_errors(callback)
   if service_filter then table.insert(filters, service_filter) end
   if env_filter then table.insert(filters, env_filter) end
   
-  local query_string = table.concat(filters, " ")
+  local query_string = table.concat(filters, " "):match("^%s*(.-)%s*$")
   
   -- query is required - if empty, show warning
   if query_string == "" then
