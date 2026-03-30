@@ -84,8 +84,10 @@ function M:_request(method, endpoint, data, callback)
   
   -- Add data for POST/PUT requests
   if method == "POST" or method == "PUT" then
+    local json_body = vim.json.encode(data)
     table.insert(args, "--data")
-    table.insert(args, vim.json.encode(data))
+    table.insert(args, json_body)
+    print("[Datadog API] JSON body: " .. json_body)
   end
   
   -- DEBUG: Print curl command
