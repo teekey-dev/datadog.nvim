@@ -16,7 +16,12 @@ function M.new(config)
   self.config = config or {}
   -- Set base URL based on site config
   local site = self.config.site or "us1"
-  self.base_url = string.format("https://api.%s.datadoghq.com/api/v2", site)
+  if site == "us1" then
+    -- us1 uses a different API domain
+    self.base_url = "https://api.datadoghq.com/api/v2"
+  else
+    self.base_url = string.format("https://api.%s.datadoghq.com/api/v2", site)
+  end
   return self
 end
 
@@ -32,6 +37,29 @@ end
 -- Build URL for API endpoint
 function M:_build_url(endpoint)
   return string.format("%s/%s", self.base_url, endpoint)
+end
+
+-- Parse time range string to milliseconds since epoch
+function M:_parse_time_range(time_range)
+  local now = os.time() * 1000 -- current time in milliseconds
+  local from_time = now
+  
+  -- Parse time range (e.g., "1h", "1w", "1d")
+  local value = tonumber(time_range:match("^%d+")) or 1
+  local unit = time_range:match("[%a]+$") or "h"
+  
+  local multiplier = {
+    ["s"] = 1000,           -- seconds
+    ["m"] = 60 * 1000,     -- minutes
+    ["h"] = 60 * 60 * 1000, -- hours
+    ["d"] = 24 * 60 * 60 * 1000, -- days
+    ["w"] = 7 * 24 * 60 * 60 * 1000, -- weeks
+  }
+  
+  local ms = multiplier[unit] or multiplier["h"]
+  from_time = now - (value * ms)
+  
+  return from_time, now
 end
 
 -- Make HTTP request to Datadog API
@@ -109,7 +137,6 @@ end
 -- Fetch error tracking issues from Datadog
 function M:fetch_errors(callback)
   -- Build filter query with service and environment
-  -- Error Tracking API doesn't use @status:error - it already queries errors
   local service_filter = ""
   if self.config.service and self.config.service ~= "" then
     service_filter = "service:" .. self.config.service
@@ -127,28 +154,30 @@ function M:fetch_errors(callback)
   
   local query_string = table.concat(filters, " ")
   if query_string == "" then
-    query_string = "*" -- Match all if no filters
+    query_string = "" -- Empty query returns all errors
   end
   
   print("[Datadog API] Error Tracking query: " .. query_string)
   
-  -- Use Error Tracking API
-  local query = {
-    filter = {
-      query = query_string,
-    },
-    page = {
-      limit = self.config.query and self.config.query.limit or 100,
-    },
+  -- Calculate time range in milliseconds
+  local time_range = self.config.query and self.config.query.time_range or "1w"
+  local from_time, to_time = self:_parse_time_range(time_range)
+  
+  -- Build request body in correct format
+  local request_body = {
+    data = {
+      type = "search_request",
+      attributes = {
+        query = query_string,
+        from = from_time,
+        to = to_time,
+        track = "logs", -- Use "logs" track for error tracking from logs
+        order_by = "FIRST_SEEN",
+      }
+    }
   }
   
-  -- Add time range if specified
-  if self.config.query and self.config.query.time_range then
-    query.filter["from"] = "now-" .. self.config.query.time_range
-    query.filter["to"] = "now"
-  end
-  
-  print("[Datadog API] Full Query: " .. vim.json.encode(query))
+  print("[Datadog API] Full Query: " .. vim.json.encode(request_body))
   
   self:_request("POST", "error-tracking/issues/search", query, function(response, err)
     if err then
