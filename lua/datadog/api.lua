@@ -14,7 +14,62 @@ M.base_url = "https://api.datadoghq.com/api/v2"
 function M.new(config)
   local self = setmetatable({}, { __index = M })
   self.config = config or {}
+  -- Auto-detect service name from project
+  self.config.service = self.config.service or M.detect_service_name()
   return self
+end
+
+-- Detect service name from project files
+function M.detect_service_name()
+  local cwd = vim.fn.getcwd()
+  
+  -- Try common project config files
+  local config_files = {
+    { file = "package.json", key = "name" },
+    { file = "go.mod", key = "module", pattern = "module%s+([^/]+)" },
+    { file = "Cargo.toml", key = "package.name", pattern = 'name%s*=%s*"([^"]+)"' },
+    { file = "pyproject.toml", key = "project.name", pattern = 'name%s*=%s*"([^"]+)"' },
+    { file = "composer.json", key = "name" },
+    { file = "pom.xml", key = "artifactId", pattern = "<artifactId>([^<]+)</artifactId>" },
+  }
+  
+  for _, config in ipairs(config_files) do
+    local filepath = cwd .. "/" .. config.file
+    local file = io.open(filepath, "r")
+    if file then
+      local content = file:read("*all")
+      file:close()
+      
+      if config.pattern then
+        -- Use pattern to extract name
+        local match = content:match(config.pattern)
+        if match then
+          print("[Datadog] Detected service: " .. match .. " from " .. config.file)
+          return match
+        end
+      else
+        -- Parse JSON
+        local ok, parsed = pcall(vim.json.decode, content)
+        if ok and parsed then
+          local keys = vim.split(config.key, ".", { plain = true })
+          local value = parsed
+          for _, k in ipairs(keys) do
+            value = value[k]
+            if not value then break end
+          end
+          if value then
+            print("[Datadog] Detected service: " .. value .. " from " .. config.file)
+            return value
+          end
+        end
+      end
+    end
+  end
+  
+  -- Fallback: use directory name
+  local dir_name = vim.fn.fnamemodify(cwd, ":t")
+  print("[Datadog] Using directory name as service: " .. dir_name)
+  return dir_name
 end
 
 -- Build headers for API requests
@@ -103,27 +158,53 @@ function M:_request(method, endpoint, data, callback)
   }):start()
 end
 
--- Fetch error logs from Datadog
+-- Fetch error tracking issues from Datadog
 function M:fetch_errors(callback)
+  -- Build filter query with service and environment
+  local service_filter = ""
+  if self.config.service and self.config.service ~= "" then
+    service_filter = "service:" .. self.config.service
+  end
+  
+  local env_filter = ""
+  if self.config.env and self.config.env ~= "" then
+    env_filter = "env:" .. self.config.env
+  end
+  
+  -- Combine filters
+  local filters = {}
+  if service_filter ~= "" then table.insert(filters, service_filter) end
+  if env_filter ~= "" then table.insert(filters, env_filter) end
+  if self.config.query and self.config.query.filter and self.config.query.filter.query then
+    table.insert(filters, self.config.query.filter.query)
+  end
+  
+  local query_string = table.concat(filters, " ")
+  if query_string == "" then
+    query_string = "*" -- Match all if no filters
+  end
+  
+  print("[Datadog API] Error Tracking query: " .. query_string)
+  
+  -- Use Error Tracking API
   local query = {
     filter = {
-      query = self.config.query.filter.query or "@status:error",
+      query = query_string,
     },
     page = {
-      limit = self.config.query.limit or 100,
+      limit = self.config.query and self.config.query.limit or 100,
     },
-    sort = self.config.query.sort or "-timestamp",
   }
   
   -- Add time range if specified
-  if self.config.query.time_range then
+  if self.config.query and self.config.query.time_range then
     query.filter["from"] = "now-" .. self.config.query.time_range
     query.filter["to"] = "now"
   end
   
-  print("[Datadog API] Query: " .. vim.json.encode(query))
+  print("[Datadog API] Full Query: " .. vim.json.encode(query))
   
-  self:_request("POST", "logs/query", query, function(response, err)
+  self:_request("POST", "error-tracking/queries", query, function(response, err)
     if err then
       print("[Datadog API] fetch_errors error: " .. vim.json.encode(err))
       if callback then
@@ -132,12 +213,12 @@ function M:fetch_errors(callback)
       return
     end
     
-    -- Process and format the response
+    -- Process and format the response from Error Tracking API
     local errors = {}
     if response and response.data then
-      print("[Datadog API] Processing " .. #response.data .. " items")
+      print("[Datadog API] Processing " .. #response.data .. " error tracking items")
       for _, item in ipairs(response.data) do
-        local formatted = self:_format_error(item)
+        local formatted = self:_format_error_tracking(item)
         table.insert(errors, formatted)
         print("[Datadog API] Formatted error: " .. vim.json.encode(formatted))
       end
@@ -152,64 +233,73 @@ function M:fetch_errors(callback)
   end)
 end
 
--- Format raw Datadog log entry into our error format
-function M:_format_error(raw)
+-- Format raw Datadog Error Tracking entry into our error format
+function M:_format_error_tracking(raw)
   local attributes = raw.attributes or {}
+  local details = attributes.details or {}
   
   return {
     id = raw.id,
-    timestamp = attributes.timestamp,
-    service = attributes.service or "unknown",
-    message = attributes.message or "",
-    status = attributes.status or "info",
-    source = attributes.source or "unknown",
-    host = attributes.host or "unknown",
-    tags = attributes.tags or {},
-    -- Extract file and line information if available
-    file = self:_extract_file_info(attributes),
-    line = self:_extract_line_info(attributes),
+    title = details.title or attributes.title or "",
+    message = details.message or attributes.message or "",
+    service = details.service or attributes.service or self.config.service or "unknown",
+    status = details.status or attributes.status or "unknown",
+    environment = details.environment or attributes.environment or self.config.env or "unknown",
+    timestamp = details.first_seen or attributes.first_seen or raw.attributes.timestamp,
+    last_seen = details.last_seen or attributes.last_seen,
+    severity = details.severity or attributes.severity or "unknown",
+    error_source = details.source or attributes.source or "unknown",
+    host = details.host or attributes.host or "unknown",
+    -- Extract file and line information
+    file = details.file or self:_extract_from_stack_trace(details.stack_trace),
+    line = details.line or self:_extract_line_from_stack(details.stack_trace),
+    stack_trace = details.stack_trace or "",
+    -- Number of occurrences
+    occurrences = details.occurrence_count or attributes.occurrence_count or 1,
   }
 end
 
--- Extract file information from log attributes
-function M:_extract_file_info(attributes)
-  -- Try common fields where file info might be stored
-  if attributes.file then
-    return attributes.file
+-- Extract file path from stack trace
+function M:_extract_from_stack_trace(stack_trace)
+  if not stack_trace or stack_trace == "" then
+    return nil
   end
   
-  if attributes.source and attributes.source.file then
-    return attributes.source.file
-  end
+  -- Try common patterns in stack traces
+  local patterns = {
+    "([^%s]+%.lua):(%d+)",           -- Lua: filename:line
+    "at%s+([^%s]+):(%d+)",            -- Java/JS: at filename:line
+    "File%s+`([^`]+)`,%s+line%s+(%d+)", -- Python: File `file`, line X
+    "([^%s]+):(%d+):%d+:%d+",         -- Rust: file:line:col
+  }
   
-  -- Check in tags
-  for _, tag in ipairs(attributes.tags or {}) do
-    if tag:match("^file:") then
-      return tag:sub(6) -- Remove "file:" prefix
-    end
-    if tag:match("^source:") then
-      return tag:sub(8) -- Remove "source:" prefix
+  for _, pattern in ipairs(patterns) do
+    local match = stack_trace:match(pattern)
+    if match and not match:match("^[%d:]+$") then
+      return match
     end
   end
   
   return nil
 end
 
--- Extract line information from log attributes
-function M:_extract_line_info(attributes)
-  -- Try common fields where line info might be stored
-  if attributes.line then
-    return tonumber(attributes.line)
+-- Extract line number from stack trace
+function M:_extract_line_from_stack(stack_trace)
+  if not stack_trace or stack_trace == "" then
+    return nil
   end
   
-  if attributes.source and attributes.source.line then
-    return tonumber(attributes.source.line)
-  end
+  local patterns = {
+    "([^%s]+%.lua):(%d+)",
+    "at%s+([^%s]+):(%d+)",
+    "File%s+`[^`]+`,%s+line%s+(%d+)",
+    "([^%s]+):(%d+):%d+:%d+",
+  }
   
-  -- Check in tags
-  for _, tag in ipairs(attributes.tags or {}) do
-    if tag:match("^line:%d+$") then
-      return tonumber(tag:sub(6)) -- Remove "line:" prefix
+  for _, pattern in ipairs(patterns) do
+    local file, line = stack_trace:match(pattern)
+    if file and line and not file:match("^[%d:]+$") then
+      return tonumber(line)
     end
   end
   
