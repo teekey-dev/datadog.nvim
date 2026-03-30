@@ -29,7 +29,17 @@ M.state = {
 function M.setup(user_config)
   -- Merge user config with defaults
   if user_config then
-    M.config = vim.tbl_deep_extend("force", M.config, user_config)
+    -- Manual table merge since vim.tbl_deep_extend might not be available in test env
+    for k, v in pairs(user_config) do
+      if type(v) == "table" and M.config[k] then
+        -- Recursively merge tables
+        for k2, v2 in pairs(v) do
+          M.config[k][k2] = v2
+        end
+      else
+        M.config[k] = v
+      end
+    end
   end
   
   -- Validate required configuration
@@ -45,11 +55,11 @@ function M.setup(user_config)
   
   -- Set up user commands
   vim.api.nvim_create_user_command("DatadogErrors", function()
-    M.show_errors_buffer()
+    require('datadog.buffer').show_errors_buffer()
   end, { desc = "Show Datadog errors in a buffer" })
   
   vim.api.nvim_create_user_command("DatadogRefresh", function()
-    M.refresh_errors()
+    require('datadog.buffer').refresh_errors()
   end, { desc = "Refresh Datadog errors" })
   
   vim.api.nvim_create_user_command("DatadogConfig", function()
