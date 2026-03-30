@@ -134,9 +134,31 @@ function M:_request(method, endpoint, data, callback)
   }):start()
 end
 
+-- Fetch git repository ID from git remote
+function M:get_git_repository_id()
+  local cwd = vim.fn.getcwd()
+  
+  -- Try to get remote origin URL
+  local handle = io.popen("cd " .. vim.fn.shellescape(cwd) .. " && git remote get-url origin 2>/dev/null")
+  if handle then
+    local url = handle:read("*a"):gsub("%s+$", "")
+    handle:close()
+    
+    if url and url ~= "" then
+      -- Convert to @git.repository:id format
+      local repo_id = url:gsub("%.git$", ""):gsub("^https?://", "")
+      return "@git.repository.id:" .. repo_id
+    end
+  end
+  
+  return nil
+end
+
 -- Fetch error tracking issues from Datadog
 function M:fetch_errors(callback)
-  -- Build filter query with service and environment
+  -- Build filter query with git repository ID (required)
+  local git_filter = M.get_git_repository_id()
+  
   local service_filter = ""
   if self.config.service and self.config.service ~= "" then
     service_filter = "service:" .. self.config.service
@@ -147,16 +169,24 @@ function M:fetch_errors(callback)
     env_filter = "env:" .. self.config.env
   end
   
-  -- Combine filters (only service and env for Error Tracking)
+  -- Combine filters
   local filters = {}
-  if service_filter ~= "" then table.insert(filters, service_filter) end
-  if env_filter ~= "" then table.insert(filters, env_filter) end
+  if git_filter then table.insert(filters, git_filter) end
+  if service_filter then table.insert(filters, service_filter) end
+  if env_filter then table.insert(filters, env_filter) end
   
   local query_string = table.concat(filters, " ")
+  
+  -- query is required - if empty, show warning
   if query_string == "" then
-    query_string = "" -- Empty query returns all errors
+    vim.notify("Datadog: No git repository detected. Please configure service or query.", vim.log.levels.WARN)
+    if callback then
+      callback({}, nil)
+    end
+    return
   end
   
+  print("[Datadog API] Git repository filter: " .. (git_filter or "none"))
   print("[Datadog API] Error Tracking query: " .. query_string)
   
   -- Calculate time range in milliseconds
