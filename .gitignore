@@ -1,0 +1,25 @@
+# Neovim
+*.swp
+*.swo
+*~
+.netrwhist
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Lua
+*.luac
+luarocks/
+
+# Test output
+test/results/
+test/output/
+
+# Editor/IDE
+.idea/
+.vscode/
+*.sublime-*
+
+# Misc
+*.log
