@@ -14,62 +14,7 @@ M.base_url = "https://api.datadoghq.com/api/v2"
 function M.new(config)
   local self = setmetatable({}, { __index = M })
   self.config = config or {}
-  -- Auto-detect service name from project
-  self.config.service = self.config.service or M.detect_service_name()
   return self
-end
-
--- Detect service name from project files
-function M.detect_service_name()
-  local cwd = vim.fn.getcwd()
-  
-  -- Try common project config files
-  local config_files = {
-    { file = "package.json", key = "name" },
-    { file = "go.mod", key = "module", pattern = "module%s+([^/]+)" },
-    { file = "Cargo.toml", key = "package.name", pattern = 'name%s*=%s*"([^"]+)"' },
-    { file = "pyproject.toml", key = "project.name", pattern = 'name%s*=%s*"([^"]+)"' },
-    { file = "composer.json", key = "name" },
-    { file = "pom.xml", key = "artifactId", pattern = "<artifactId>([^<]+)</artifactId>" },
-  }
-  
-  for _, config in ipairs(config_files) do
-    local filepath = cwd .. "/" .. config.file
-    local file = io.open(filepath, "r")
-    if file then
-      local content = file:read("*all")
-      file:close()
-      
-      if config.pattern then
-        -- Use pattern to extract name
-        local match = content:match(config.pattern)
-        if match then
-          print("[Datadog] Detected service: " .. match .. " from " .. config.file)
-          return match
-        end
-      else
-        -- Parse JSON
-        local ok, parsed = pcall(vim.json.decode, content)
-        if ok and parsed then
-          local keys = vim.split(config.key, ".", { plain = true })
-          local value = parsed
-          for _, k in ipairs(keys) do
-            value = value[k]
-            if not value then break end
-          end
-          if value then
-            print("[Datadog] Detected service: " .. value .. " from " .. config.file)
-            return value
-          end
-        end
-      end
-    end
-  end
-  
-  -- Fallback: use directory name
-  local dir_name = vim.fn.fnamemodify(cwd, ":t")
-  print("[Datadog] Using directory name as service: " .. dir_name)
-  return dir_name
 end
 
 -- Build headers for API requests
