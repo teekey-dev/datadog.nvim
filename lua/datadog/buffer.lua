@@ -79,7 +79,13 @@ function M.move_cursor(direction)
     return
   end
   
-  local cursor = M.split:win().cursor
+  -- Get current window and cursor using vim API
+  local winid = M.split.winid
+  if not winid or not vim.api.nvim_win_is_valid(winid) then
+    return
+  end
+  
+  local cursor = vim.api.nvim_win_get_cursor(winid)
   local new_line = cursor[1] + direction
   
   local buf_line_count = vim.api.nvim_buf_line_count(M.split.bufnr)
@@ -90,7 +96,7 @@ function M.move_cursor(direction)
     new_line = buf_line_count
   end
   
-  M.split:win().cursor = { new_line, 0 }
+  vim.api.nvim_win_set_cursor(winid, { new_line, 0 })
 end
 
 -- Refresh errors from Datadog API
@@ -211,7 +217,12 @@ function M.navigate_to_error()
     return
   end
   
-  local cursor = M.split:win().cursor
+  local winid = M.split.winid
+  if not winid or not vim.api.nvim_win_is_valid(winid) then
+    return
+  end
+  
+  local cursor = vim.api.nvim_win_get_cursor(winid)
   local line_num = cursor[1]
   
   -- Get line count before header (header is 2 lines: header + separator)
