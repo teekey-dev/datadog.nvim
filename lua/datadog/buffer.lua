@@ -1,5 +1,5 @@
 -- Buffer management for datadog.nvim
--- Handles creation and display of the errors buffer using Nui Split
+-- Handles creation and display of the errors buffer
 
 local M = {}
 
@@ -7,15 +7,13 @@ local M = {}
 local api = require('datadog.api')
 local utils = require('datadog.utils')
 
--- Nui components
-local Split = require('nui.split')
-
 -- Buffer state
-M.split = nil
+M.bufnr = nil
+M.winid = nil
 M.errors = {}
 M.error_line_map = {}
 
--- Format errors for display in the split
+-- Format errors for display in the buffer
 function M.format_errors_for_split(errors)
   local lines = {}
   M.error_line_map = {}
@@ -106,54 +104,40 @@ end
 
 -- Create and show the errors split at the bottom
 function M.show_errors_buffer()
-  -- Create split at the bottom
-  M.split = Split({
-    position = "50%",
-    size = 15,
-    relative = "editor",
-    border = {
-      style = "rounded",
-      text = {
-        top = " Datadog Errors ",
-        top_align = "center",
-      },
-    },
-  })
-  
-  -- Set up key mappings
-  M.split:map("n", "q", function()
-    M.close_buffer()
-  end, { noremap = true })
-  
-  M.split:map("n", "<ESC>", function()
-    M.close_buffer()
-  end, { noremap = true })
-  
-  M.split:map("n", "r", function()
-    M.refresh_errors()
-  end, { noremap = true })
-  
-  M.split:map("n", "<CR>", function()
-    M.navigate_to_error()
-  end, { noremap = true })
-  
-  M.split:map("n", "j", function()
-    M.move_cursor(1)
-  end, { noremap = true })
-  
-  M.split:map("n", "k", function()
-    M.move_cursor(-1)
-  end, { noremap = true })
-  
-  -- Show the split
-  M.split:mount()
+  -- Create a new scratch buffer
+  M.bufnr = vim.api.nvim_create_buf(false, true)
   
   -- Set buffer options
-  local bufnr = M.split.bufnr
-  vim.api.nvim_buf_set_option(bufnr, 'buftype', 'nofile')
-  vim.api.nvim_buf_set_option(bufnr, 'swapfile', false)
-  vim.api.nvim_buf_set_option(bufnr, 'modifiable', true)
-  vim.api.nvim_buf_set_option(bufnr, 'bufhidden', 'hide')
+  vim.api.nvim_buf_set_option(M.bufnr, 'buftype', 'nofile')
+  vim.api.nvim_buf_set_option(M.bufnr, 'swapfile', false)
+  vim.api.nvim_buf_set_option(M.bufnr, 'bufhidden', 'hide')
+  vim.api.nvim_buf_set_option(M.bufnr, 'modifiable', true)
+  vim.api.nvim_buf_set_name(M.bufnr, 'Datadog Errors')
+  
+  -- Open horizontal split at the bottom
+  vim.cmd('botright new')
+  
+  -- Set the buffer to the current window
+  vim.api.nvim_win_set_buf(0, M.bufnr)
+  M.winid = vim.api.nvim_get_current_win()
+  
+  -- Set window options
+  vim.api.nvim_win_set_option(M.winid, 'wrap', false)
+  vim.api.nvim_win_set_option(M.winid, 'number', false)
+  vim.api.nvim_win_set_option(M.winid, 'cursorline', true)
+  
+  -- Set split height to 15 lines
+  vim.cmd('resize 15')
+  
+  -- Set up key mappings
+  local opts = { noremap = true, silent = true, buffer = M.bufnr }
+  
+  vim.api.nvim_buf_set_keymap(M.bufnr, 'n', 'q', '<cmd>lua require("datadog.buffer").close_buffer()<CR>', opts)
+  vim.api.nvim_buf_set_keymap(M.bufnr, 'n', '<ESC>', '<cmd>lua require("datadog.buffer").close_buffer()<CR>', opts)
+  vim.api.nvim_buf_set_keymap(M.bufnr, 'n', 'r', '<cmd>lua require("datadog.buffer").refresh_errors()<CR>', opts)
+  vim.api.nvim_buf_set_keymap(M.bufnr, 'n', '<CR>', '<cmd>lua require("datadog.buffer").navigate_to_error()<CR>', opts)
+  vim.api.nvim_buf_set_keymap(M.bufnr, 'n', 'j', '<cmd>lua require("datadog.buffer").move_cursor(1)<CR>', opts)
+  vim.api.nvim_buf_set_keymap(M.bufnr, 'n', 'k', '<cmd>lua require("datadog.buffer").move_cursor(-1)<CR>', opts)
   
   -- Load and display errors
   M.refresh_errors()
@@ -161,7 +145,7 @@ end
 
 -- Move cursor to next/previous error
 function M.move_cursor(direction)
-  if not M.split or not M.split:is_mounted() then
+  if not M.bufnr or not vim.api.nvim_buf_is_valid(M.bufnr) then
     return
   end
   
@@ -169,10 +153,10 @@ function M.move_cursor(direction)
     return
   end
   
-  local cursor = M.split:win().cursor
+  local cursor = vim.api.nvim_win_get_cursor(0)
   local new_line = cursor[1] + direction
   
-  local buf_line_count = vim.api.nvim_buf_line_count(M.split.bufnr)
+  local buf_line_count = vim.api.nvim_buf_line_count(M.bufnr)
   
   if new_line < 1 then
     new_line = 1
@@ -180,19 +164,17 @@ function M.move_cursor(direction)
     new_line = buf_line_count
   end
   
-  M.split:win().cursor = { new_line, 0 }
+  vim.api.nvim_win_set_cursor(0, { new_line, 0 })
 end
 
 -- Refresh errors from Datadog API
 function M.refresh_errors()
-  if not M.split or not M.split:is_mounted() then
+  if not M.bufnr or not vim.api.nvim_buf_is_valid(M.bufnr) then
     return
   end
   
-  local bufnr = M.split.bufnr
-  
   -- Show loading message
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
+  vim.api.nvim_buf_set_lines(M.bufnr, 0, -1, false, {
     " Loading errors from Datadog...",
   })
   
@@ -201,14 +183,12 @@ function M.refresh_errors()
   api_client:fetch_errors(function(errors, err)
     -- Schedule all UI operations to run on the main event loop
     vim.schedule(function()
-      if not M.split or not M.split:is_mounted() then
+      if not M.bufnr or not vim.api.nvim_buf_is_valid(M.bufnr) then
         return
       end
       
-      local bufnr = M.split.bufnr
-      
       if err then
-        vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
+        vim.api.nvim_buf_set_lines(M.bufnr, 0, -1, false, {
           string.format(" Error: %s", err.error or "Unknown error"),
           "",
           " Press 'r' to retry or 'q' to close",
@@ -222,21 +202,21 @@ function M.refresh_errors()
       -- Format and display errors
       local lines = M.format_errors_for_split(M.errors)
       
-      vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+      vim.api.nvim_buf_set_lines(M.bufnr, 0, -1, false, lines)
       
       -- Make buffer read-only
-      vim.api.nvim_buf_set_option(bufnr, 'modifiable', false)
+      vim.api.nvim_buf_set_option(M.bufnr, 'modifiable', false)
     end)
   end)
 end
 
 -- Navigate to the source file of the error under cursor
 function M.navigate_to_error()
-  if not M.split or not M.split:is_mounted() then
+  if not M.bufnr or not vim.api.nvim_buf_is_valid(M.bufnr) then
     return
   end
   
-  local cursor = M.split:win().cursor
+  local cursor = vim.api.nvim_win_get_cursor(0)
   local line_num = cursor[1]
   
   -- Get error index from line map
@@ -255,7 +235,7 @@ function M.navigate_to_error()
     return
   end
   
-  -- Close the split
+  -- Close the buffer
   M.close_buffer()
   
   -- Open the file
@@ -270,12 +250,13 @@ function M.navigate_to_error()
   end
 end
 
--- Close the errors split
+-- Close the errors buffer
 function M.close_buffer()
-  if M.split and M.split:is_mounted() then
-    M.split:unmount()
-    M.split = nil
+  if M.winid and vim.api.nvim_win_is_valid(M.winid) then
+    vim.api.nvim_win_close(M.winid, true)
+    M.winid = nil
   end
+  M.bufnr = nil
 end
 
 return M
