@@ -210,7 +210,7 @@ function M:fetch_errors(callback)
         from = from_time,
         to = to_time,
         track = "trace", -- Use "trace" track for error tracking
-        order_by = "FIRST_SEEN",
+        order_by = "TOTAL_COUNT",
       }
     }
   }
@@ -230,11 +230,22 @@ function M:fetch_errors(callback)
     local errors = {}
     if response and response.data then
       print("[Datadog API] Processing " .. #response.data .. " error tracking items")
+      
+      -- Build included map for quick lookup
+      local included_map = {}
+      if response.included then
+        for _, inc in ipairs(response.included) do
+          if inc.id and inc.type == "issue" then
+            included_map[inc.id] = inc
+          end
+        end
+      end
+      
       for _, item in ipairs(response.data) do
         -- Skip items with no occurrences in current timeframe
         local total_count = (item.attributes and item.attributes.total_count) or 0
         if total_count > 0 then
-          local formatted = self:_format_error_tracking(item)
+          local formatted = self:_format_error_tracking(item, included_map)
           table.insert(errors, formatted)
           print("[Datadog API] Formatted error: " .. vim.json.encode(formatted))
         end
@@ -251,7 +262,7 @@ function M:fetch_errors(callback)
 end
 
 -- Format raw Datadog Error Tracking entry into our error format
-function M:_format_error_tracking(raw)
+function M:_format_error_tracking(raw, included_map)
   local attributes = raw.attributes or {}
   local relationships = raw.relationships or {}
   local issue_data = relationships.issue and relationships.issue.data or {}
@@ -259,26 +270,34 @@ function M:_format_error_tracking(raw)
   -- Get issue ID from relationships
   local issue_id = issue_data.id or raw.id
   
+  -- Look up the issue details from included array
+  local issue_attrs = {}
+  if included_map and included_map[issue_id] then
+    issue_attrs = included_map[issue_id].attributes or {}
+  end
+  
+  -- Extract file_path and function_name from issue attributes
+  local file_path = issue_attrs.file_path
+  local function_name = issue_attrs.function_name
+  
   return {
     id = issue_id,
-    title = attributes.title or "",
-    message = attributes.message or "",
-    service = attributes.service or self.config.service or "unknown",
-    status = attributes.status or "unknown",
+    title = issue_attrs.error_message or attributes.title or "",
+    message = issue_attrs.error_message or attributes.message or "",
+    service = issue_attrs.service or attributes.service or self.config.service or "unknown",
+    status = issue_attrs.state or attributes.status or "unknown",
     environment = attributes.environment or self.config.env or "unknown",
-    timestamp = attributes.first_seen or attributes.timestamp,
-    last_seen = attributes.last_seen,
+    timestamp = issue_attrs.first_seen or attributes.first_seen or attributes.timestamp,
+    last_seen = issue_attrs.last_seen or attributes.last_seen,
     severity = attributes.severity or "unknown",
-    error_source = attributes.source or "unknown",
+    error_source = issue_attrs.error_type or attributes.source or "unknown",
     host = attributes.host or "unknown",
     -- Count of occurrences
     occurrences = attributes.total_count or 1,
     -- Extract file and line from stack trace
-    file = nil,
+    file = file_path,
     line = nil,
     stack_trace = attributes.stack_trace or "",
-    -- Number of occurrences
-    occurrences = details.occurrence_count or attributes.occurrence_count or 1,
   }
 end
 
