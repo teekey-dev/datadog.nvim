@@ -1,5 +1,5 @@
 -- Buffer management for datadog.nvim
--- Handles creation and display of the errors buffer
+-- Handles creation and display of the errors buffer using Nui
 
 local M = {}
 
@@ -7,67 +7,57 @@ local M = {}
 local api = require('datadog.api')
 local utils = require('datadog.utils')
 
+-- Nui components
+local Popup = require('nui.popup')
+
 -- Buffer state
-M.bufnr = nil
-M.winid = nil
+M.popup = nil
 M.errors = {}
+M.error_line_map = {}
 
--- Create a new errors buffer
-function M.create_buffer()
-  -- Create a new scratch buffer
-  local bufnr = vim.api.nvim_create_buf(false, true) -- no file, scratch buffer
-  
-  -- Set buffer options
-  vim.api.nvim_buf_set_option(bufnr, 'buftype', 'nofile')
-  vim.api.nvim_buf_set_option(bufnr, 'bufhidden', 'wipe')
-  vim.api.nvim_buf_set_option(bufnr, 'swapfile', false)
-  vim.api.nvim_buf_set_option(bufnr, 'modifiable', false)
-  
-  -- Set buffer name
-  vim.api.nvim_buf_set_name(bufnr, 'Datadog Errors')
-  
-  return bufnr
-end
-
--- Set up key mappings for the buffer
-function M.setup_mappings(bufnr)
-  local opts = { noremap = true, silent = true }
-  
-  -- Navigate to source file on Enter
-  vim.api.nvim_buf_set_keymap(bufnr, 'n', '<CR>', 
-    [[<cmd>lua require('datadog.buffer').navigate_to_error()<CR>]], opts)
-  
-  -- Refresh errors with 'r'
-  vim.api.nvim_buf_set_keymap(bufnr, 'n', 'r', 
-    [[<cmd>lua require('datadog.buffer').refresh_errors()<CR>]], opts)
-  
-  -- Close buffer with 'q' or ESC
-  vim.api.nvim_buf_set_keymap(bufnr, 'n', 'q', 
-    [[<cmd>lua require('datadog.buffer').close_buffer()<CR>]], opts)
-  vim.api.nvim_buf_set_keymap(bufnr, 'n', '<ESC>', 
-    [[<cmd>lua require('datadog.buffer').close_buffer()<CR>]], opts)
-end
-
--- Format errors for display in the buffer
-function M.format_errors_for_display(errors)
+-- Format errors for display in the popup
+function M.format_errors_for_popup(errors)
   local lines = {}
+  M.error_line_map = {}
   
   -- Header
   table.insert(lines, " Datadog Error Tracking ")
-  table.insert(lines, string.rep("─", vim.fn.strwidth(lines[1])))
-  table.insert(lines, "")
+  table.insert(lines, string.rep("─", 60))
   
   if #errors == 0 then
     table.insert(lines, " No errors found ")
     return lines
   end
   
-  -- Error entries with detailed information
-  for _, error in ipairs(errors) do
-    -- ID (truncated)
-    local id = error.id or "unknown"
-    if #id > 8 then
-      id = id:sub(1, 8) .. "..."
+  -- Column headers
+  table.insert(lines, "")
+  table.insert(lines, string.format("%-8s │ %-6s │ %-18s │ %-20s", 
+    "COUNT", "TYPE", "SERVICE", "MESSAGE"))
+  table.insert(lines, string.rep("─", 76))
+  
+  -- Error entries
+  for i, error in ipairs(errors) do
+    local line_index = #lines + 1
+    
+    -- Occurrences
+    local occurrences = error.occurrences or 0
+    
+    -- Error Type
+    local error_type = error.status or error.error_source or "unknown"
+    if #error_type > 6 then
+      error_type = error_type:sub(1, 6)
+    end
+    
+    -- Service
+    local service = error.service or "unknown"
+    if #service > 18 then
+      service = service:sub(1, 15) .. "..."
+    end
+    
+    -- Message (title)
+    local message = error.title or error.message or "Unknown error"
+    if #message > 20 then
+      message = message:sub(1, 17) .. "..."
     end
     
     -- Timestamp
@@ -76,136 +66,128 @@ function M.format_errors_for_display(errors)
       timestamp = utils.format_timestamp(error.timestamp)
     end
     
-    -- Service
-    local service = error.service or "unknown"
-    if #service > 20 then
-      service = service:sub(1, 17) .. "..."
+    -- File info
+    local file_info = ""
+    if error.file then
+      local file = error.file
+      if #file > 30 then
+        file = "..." .. file:sub(-27)
+      end
+      file_info = string.format("%s:%s", file, error.line or "")
     end
     
-    -- Status/Error Type
-    local status = error.status or error.error_source or "unknown"
-    if #status > 15 then
-      status = status:sub(1, 12) .. "..."
+    -- Line with error data
+    table.insert(lines, string.format("%-8d │ %-6s │ %-18s │ %-20s", 
+      occurrences, error_type, service, message))
+    M.error_line_map[#lines] = { error_index = i }
+    
+    -- Detail line (file and timestamp)
+    if file_info ~= "" or timestamp ~= "" then
+      local detail = ""
+      if file_info ~= "" and timestamp ~= "" then
+        detail = file_info .. "  |  " .. timestamp
+      elseif file_info ~= "" then
+        detail = file_info
+      else
+        detail = timestamp
+      end
+      table.insert(lines, "  └─ " .. detail)
+      M.error_line_map[#lines] = { error_index = i }
     end
     
-    -- Occurrences
-    local occurrences = error.occurrences or 0
-    
-    -- Message (title)
-    local message = error.title or error.message or ""
-    if #message > 50 then
-      message = message:sub(1, 47) .. "..."
+    -- Separator
+    if i < #errors then
+      table.insert(lines, "")
     end
-    
-    -- File path
-    local file = error.file or ""
-    if #file > 40 then
-      file = "..." .. file:sub(-37)
-    end
-    
-    -- Line number
-    local line = error.line or ""
-    
-    -- Stack trace (first line only)
-    local stack = error.stack_trace or ""
-    local stack_preview = ""
-    if #stack > 50 then
-      stack_preview = stack:sub(1, 47) .. "..."
-    else
-      stack_preview = stack
-    end
-    
-    -- Error type/source
-    local error_type = error.error_source or ""
-    
-    -- Host and Environment
-    local env = error.env or "unknown"
-    local host = error.host or "unknown"
-    if #host > 15 then
-      host = host:sub(1, 12) .. "..."
-    end
-    
-    -- Build formatted lines for this error entry
-    -- Line 1: ID | Timestamp | Service | Status | Occurrences
-    table.insert(lines, string.format(" %-10s │ %-12s │ %-20s │ %-15s │ %-6d ", 
-      id, timestamp, service, status, occurrences))
-    
-    -- Line 2: Message
-    table.insert(lines, string.format(" %-10s │ %s ", "", message))
-    
-    -- Line 3: File:Line
-    if file ~= "" then
-      table.insert(lines, string.format(" %-10s │ %s:%s ", "", file, line))
-    end
-    
-    -- Line 4: Error type
-    if error_type ~= "" then
-      table.insert(lines, string.format(" %-10s │ type: %s ", "", error_type))
-    end
-    
-    -- Line 5: Stack trace preview
-    if stack_preview ~= "" then
-      table.insert(lines, string.format(" %-10s │ %s ", "", stack_preview))
-    end
-    
-    -- Line 6: Host | Environment
-    table.insert(lines, string.format(" %-10s │ host: %-15s │ env: %s ", "", host, env))
-    
-    -- Separator between errors
-    table.insert(lines, string.rep("─", 100))
   end
   
   return lines
 end
 
--- Show the errors buffer in a split at the bottom
+-- Create and show the errors popup
 function M.show_errors_buffer()
-  -- Create buffer if it doesn't exist
-  if not M.bufnr or not vim.api.nvim_buf_is_valid(M.bufnr) then
-    M.bufnr = M.create_buffer()
-  end
+  -- Create popup
+  M.popup = Popup({
+    position = { row = "100%", col = "100%" },
+    size = { width = 80, height = 20 },
+    relative = { type = "editor", anchor = "NW" },
+    anchor = "NW",
+    border = {
+      style = "rounded",
+      text = {
+        top = " Datadog Errors ",
+        top_align = "center",
+      },
+    },
+    highlight = "Normal",
+    zindex = 100,
+  })
   
-  -- Set up mappings
-  M.setup_mappings(M.bufnr)
+  -- Set up key mappings
+  M.popup:map("n", "q", function()
+    M.close_buffer()
+  end, { noremap = true })
   
-  -- Open a horizontal split at the bottom
-  vim.cmd('split')
+  M.popup:map("n", "<ESC>", function()
+    M.close_buffer()
+  end, { noremap = true })
   
-  -- Move the split to the bottom
-  vim.cmd('wincmd J')
+  M.popup:map("n", "r", function()
+    M.refresh_errors()
+  end, { noremap = true })
   
-  -- Set split height (default 15 lines)
-  vim.cmd('resize 15')
+  M.popup:map("n", "<CR>", function()
+    M.navigate_to_error()
+  end, { noremap = true })
   
-  -- Set the buffer to the window
-  vim.api.nvim_win_set_buf(0, M.bufnr)
-  M.winid = vim.api.nvim_get_current_win()
+  M.popup:map("n", "j", function()
+    M.move_cursor(1)
+  end, { noremap = true })
   
-  -- Set window options
-  vim.api.nvim_win_set_option(M.winid, 'wrap', true)
-  vim.api.nvim_win_set_option(M.winid, 'number', false)
-  vim.api.nvim_win_set_option(M.winid, 'relativenumber', false)
-  vim.api.nvim_win_set_option(M.winid, 'cursorline', true)
+  M.popup:map("n", "k", function()
+    M.move_cursor(-1)
+  end, { noremap = true })
+  
+  -- Show the popup
+  M.popup:mount()
   
   -- Load and display errors
   M.refresh_errors()
 end
 
--- Refresh errors from Datadog API
-function M.refresh_errors()
-  if not M.bufnr or not vim.api.nvim_buf_is_valid(M.bufnr) then
+-- Move cursor to next/previous error
+function M.move_cursor(direction)
+  if not M.popup or not M.popup:is_mounted() then
     return
   end
   
-  -- Make buffer modifiable temporarily
-  vim.api.nvim_buf_set_option(M.bufnr, 'modifiable', true)
+  if #M.errors == 0 then
+    return
+  end
+  
+  local cursor = M.popup:win().cursor
+  local new_line = cursor[1] + direction
+  
+  local buf_line_count = vim.api.nvim_buf_line_count(M.popup.bufnr)
+  
+  if new_line < 1 then
+    new_line = 1
+  elseif new_line > buf_line_count then
+    new_line = buf_line_count
+  end
+  
+  M.popup:win().cursor = { new_line, 0 }
+end
+
+-- Refresh errors from Datadog API
+function M.refresh_errors()
+  if not M.popup or not M.popup:is_mounted() then
+    return
+  end
   
   -- Show loading message
-  vim.api.nvim_buf_set_lines(M.bufnr, 0, -1, false, {
-    " Datadog Error Tracking ",
-    string.rep("─", vim.fn.strwidth(" Datadog Error Tracking ")),
-    "",
-    " Loading errors from Datadog... ",
+  vim.api.nvim_buf_set_lines(M.popup.bufnr, 0, -1, false, {
+    " Loading errors from Datadog...",
   })
   
   -- Fetch errors from API
@@ -213,21 +195,15 @@ function M.refresh_errors()
   api_client:fetch_errors(function(errors, err)
     -- Schedule all UI operations to run on the main event loop
     vim.schedule(function()
-      if not M.bufnr or not vim.api.nvim_buf_is_valid(M.bufnr) then
+      if not M.popup or not M.popup:is_mounted() then
         return
       end
       
-      -- Make buffer modifiable temporarily
-      vim.api.nvim_buf_set_option(M.bufnr, 'modifiable', true)
-      
       if err then
-        vim.api.nvim_buf_set_lines(M.bufnr, 0, -1, false, {
-          " Datadog Error Tracking ",
-          string.rep("─", vim.fn.strwidth(" Datadog Error Tracking ")),
+        vim.api.nvim_buf_set_lines(M.popup.bufnr, 0, -1, false, {
+          string.format(" Error: %s", err.error or "Unknown error"),
           "",
-          string.format(" Error fetching data: %s ", err.error or "Unknown error"),
-          "",
-          " Press 'r' to retry ",
+          " Press 'r' to retry or 'q' to close",
         })
         return
       end
@@ -236,44 +212,27 @@ function M.refresh_errors()
       M.errors = errors or {}
       
       -- Format and display errors
-      local lines = M.format_errors_for_display(M.errors)
-      vim.api.nvim_buf_set_lines(M.bufnr, 0, -1, false, lines)
+      local lines = M.format_errors_for_popup(M.errors)
       
-      -- Make buffer read-only again
-      vim.api.nvim_buf_set_option(M.bufnr, 'modifiable', false)
+      vim.api.nvim_buf_set_lines(M.popup.bufnr, 0, -1, false, lines)
     end)
   end)
 end
 
 -- Navigate to the source file of the error under cursor
 function M.navigate_to_error()
-  if not M.bufnr or not vim.api.nvim_buf_is_valid(M.bufnr) then
+  if not M.popup or not M.popup:is_mounted() then
     return
   end
   
-  local cursor = vim.api.nvim_win_get_cursor(0)
+  local cursor = M.popup:win().cursor
   local line_num = cursor[1]
   
-  -- New format: 2 header lines, then 7 lines per error (6 info lines + 1 separator)
-  local header_lines = 2
-  local lines_per_error = 7
+  -- Get error index from line map
+  local line_data = M.error_line_map[line_num]
+  local error_index = line_data and line_data.error_index
   
-  -- Find which error we're on by counting back through separators
-  local current_line = line_num
-  local error_index = 0
-  
-  -- Go back through the buffer to find which error we're on
-  while current_line > header_lines do
-    -- Check if this is a separator line (all dashes)
-    local line_content = vim.api.nvim_buf_get_lines(M.bufnr, current_line - 1, current_line, false)[1]
-    if line_content and line_content:match("^%-+$") then
-      -- This is a separator, the error is before it
-      error_index = error_index + 1
-    end
-    current_line = current_line - 1
-  end
-  
-  if error_index < 1 or error_index > #M.errors then
+  if not error_index then
     vim.notify("No error at this line", vim.log.levels.WARN)
     return
   end
@@ -285,7 +244,7 @@ function M.navigate_to_error()
     return
   end
   
-  -- Close the errors buffer
+  -- Close the popup
   M.close_buffer()
   
   -- Open the file
@@ -300,14 +259,12 @@ function M.navigate_to_error()
   end
 end
 
--- Close the errors buffer
+-- Close the errors popup
 function M.close_buffer()
-  if M.winid and vim.api.nvim_win_is_valid(M.winid) then
-    vim.api.nvim_win_close(M.winid, true)
-    M.winid = nil
+  if M.popup and M.popup:is_mounted() then
+    M.popup:unmount()
+    M.popup = nil
   end
-  
-  -- Note: We don't delete the buffer as it's a scratch buffer that will be wiped when hidden
 end
 
 return M
