@@ -265,6 +265,11 @@ function M:fetch_errors(callback)
 				local attrs = data_wrapper.attributes or {}
 				local custom = attrs.custom or {}
 				
+				print("[Datadog] span: " .. vim.inspect(span))
+				print("[Datadog] data_wrapper: " .. vim.inspect(data_wrapper))
+				print("[Datadog] attrs: " .. vim.inspect(attrs))
+				print("[Datadog] custom: " .. vim.inspect(custom))
+				
 				formatted.title = custom.error_message or custom.error_title or ""
 				formatted.message = custom.error_message or ""
 				formatted.service = attrs.service or self.config.service or "unknown"

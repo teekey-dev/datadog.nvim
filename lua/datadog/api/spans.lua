@@ -25,6 +25,8 @@ function M:search_by_issue(issue_id, from_iso, to_iso, callback)
 	}
 
 	self._api:_request("POST", "spans/events/search", request_body, function(response, err)
+		print("[Datadog Spans] Full response: " .. vim.inspect(response))
+		
 		if err then
 			callback(nil, err)
 			return
