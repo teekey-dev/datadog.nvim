@@ -260,23 +260,23 @@ function M:fetch_errors(callback)
 					occurrences = issue.total_count,
 				}
 
-				if span and not span_err then
-					local attrs = span.attributes or {}
-					local span_attrs = attrs.attributes or {}
-
-					formatted.title = span_attrs["error.message"] or span_attrs["error.title"] or ""
-					formatted.message = span_attrs["error.message"] or ""
-					formatted.service = attrs.service or self.config.service or "unknown"
-					formatted.status = span_attrs["error.type"] or "unknown"
-					formatted.timestamp = attrs.start_timestamp or attrs.timestamp
-					formatted.last_seen = attrs.end_timestamp or attrs.timestamp
-					formatted.error_source = span_attrs["error.type"] or "unknown"
-					formatted.file = span_attrs["file.path"] or nil
-					formatted.line = span_attrs["file.line"] or nil
-					formatted.stack_trace = span_attrs["error.stack"] or ""
-					formatted.host = attrs.host or "unknown"
-					formatted.env = attrs.env or self.config.env or "unknown"
-				else
+			if span and not span_err then
+				local attrs = span.attributes or {}
+				local custom = attrs.custom or {}
+				
+				formatted.title = custom.error_message or custom.error_title or ""
+				formatted.message = custom.error_message or ""
+				formatted.service = attrs.service or self.config.service or "unknown"
+				formatted.status = custom.error_type or "unknown"
+				formatted.timestamp = attrs.start_timestamp or attrs.timestamp
+				formatted.last_seen = attrs.end_timestamp or attrs.timestamp
+				formatted.error_source = custom.error_type or "unknown"
+				formatted.file = custom.error_file or nil
+				formatted.line = custom.error_line or nil
+				formatted.stack_trace = custom.error_stack or ""
+				formatted.host = attrs.host or "unknown"
+				formatted.env = attrs.env or self.config.env or "unknown"
+			else
 					formatted.title = "Unknown error"
 					formatted.message = ""
 					formatted.service = self.config.service or "unknown"
