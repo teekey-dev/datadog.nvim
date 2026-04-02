@@ -19,6 +19,7 @@ use {
   'your-username/datadog.nvim',
   requires = {
     'nvim-lua/plenary.nvim', -- For HTTP requests
+    'nvim-tree/nui.nvim',    -- For popup UI
     'nvim-web-devicons',     -- Optional: for file icons
   },
   config = function()
@@ -47,6 +48,7 @@ use {
   'your-username/datadog.nvim',
   dependencies = {
     'nvim-lua/plenary.nvim',
+    'nvim-tree/nui.nvim',    -- For popup UI
     'nvim-web-devicons', -- Optional
   },
   opts = {
