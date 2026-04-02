@@ -269,15 +269,6 @@ function M:fetch_errors(callback)
       local function check_complete()
         pending = pending - 1
         if pending == 0 then
-          -- Filter out errors with 0 occurrences
-          local filtered_errors = {}
-          for _, err in ipairs(errors) do
-            if (err.occurrences or 0) > 0 then
-              table.insert(filtered_errors, err)
-            end
-          end
-          errors = filtered_errors
-          
           -- Sort errors by occurrences (total_count) in descending order
           table.sort(errors, function(a, b)
             return (a.occurrences or 0) > (b.occurrences or 0)
