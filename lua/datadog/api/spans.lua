@@ -2,7 +2,62 @@
 
 local M = {}
 
--- Search spans by issue ID
+-- Search spans by multiple issue IDs at once
+function M:search_by_issues(issue_ids, from_iso, to_iso, callback)
+	if #issue_ids == 0 then
+		callback({}, nil)
+		return
+	end
+	
+	-- Build OR query for all issue IDs
+	local query_parts = {}
+	for _, issue in ipairs(issue_ids) do
+		table.insert(query_parts, "@issue.id:" .. issue.id)
+	end
+	local query = "(" .. table.concat(query_parts, " OR ") .. ")"
+	
+	local request_body = {
+		data = {
+			attributes = {
+				filter = {
+					from = from_iso,
+					to = to_iso,
+					query = query,
+				},
+				options = {
+					timezone = "UTC",
+				},
+				page = {
+					limit = #issue_ids,
+				},
+				sort = "-timestamp",
+			},
+			type = "search_request",
+		},
+	}
+	
+	self._api:_request("POST", "spans/events/search", request_body, function(response, err)
+		if err then
+			callback(nil, err)
+			return
+		end
+		
+		-- Build a map of issue_id -> span data
+		local spans_map = {}
+		if response and response.data then
+			for _, span in ipairs(response.data) do
+				local issue_id = span.data and span.data.attributes and span.data.attributes.issue_id
+				if issue_id then
+					spans_map[issue_id] = span
+				end
+			end
+		end
+		
+		callback(spans_map, nil)
+	end)
+end
+
+-- Search spans by issue ID (single)
 function M:search_by_issue(issue_id, from_iso, to_iso, callback)
 	local request_body = {
 		data = {
@@ -23,10 +78,8 @@ function M:search_by_issue(issue_id, from_iso, to_iso, callback)
 			type = "search_request",
 		},
 	}
-
+	
 	self._api:_request("POST", "spans/events/search", request_body, function(response, err)
-		print("[Datadog Spans] Full response: " .. vim.inspect(response))
-		
 		if err then
 			callback(nil, err)
 			return

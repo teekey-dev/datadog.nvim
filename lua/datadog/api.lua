@@ -236,61 +236,60 @@ function M:fetch_errors(callback)
 			return
 		end
 
-		-- Fetch span details for each issue
-		local pending = #issue_ids
-		local errors = {}
-
-		local function check_complete()
-			pending = pending - 1
-			if pending == 0 then
-				-- Sort by occurrences descending
-				table.sort(errors, function(a, b)
-					return (a.occurrences or 0) > (b.occurrences or 0)
-				end)
-				if callback then
-					callback(errors, nil)
-				end
+	-- Fetch span details for all issues in one call
+	self.spans:search_by_issues(issue_ids, from_iso, to_iso, function(spans_map, err)
+		if err then
+			if callback then
+				callback(nil, err)
 			end
+			return
 		end
 
+		-- Build formatted errors from spans map
+		local errors = {}
 		for _, issue in ipairs(issue_ids) do
-			self.spans:search_by_issue(issue.id, from_iso, to_iso, function(span, span_err)
-				local formatted = {
-					id = issue.id,
-					occurrences = issue.total_count,
-				}
+			local span = spans_map[issue.id]
 
-				if span and not span_err then
-					local attrs = span.attributes or {}
-					local custom = attrs.custom or {}
+			local formatted = {
+				id = issue.id,
+				occurrences = issue.total_count,
+			}
 
-					print("[Datadog] span: " .. vim.inspect(span))
-					print("[Datadog] attrs: " .. vim.inspect(attrs))
-					print("[Datadog] custom: " .. vim.inspect(custom))
+			if span then
+				local data_wrapper = span.data or {}
+				local attrs = data_wrapper.attributes or {}
+				local custom = attrs.custom or {}
 
-					formatted.title = custom.error.message or custom.error_title or ""
-					formatted.message = custom.error.message or ""
-					formatted.service = attrs.service or self.config.service or "unknown"
-					formatted.status = custom.error.type or "unknown"
-					formatted.timestamp = attrs.start_timestamp or attrs.timestamp
-					formatted.last_seen = attrs.end_timestamp or attrs.timestamp
-					formatted.error_source = custom.error.type or "unknown"
-					formatted.file = custom.error.file or nil
-					formatted.line = custom.error.line or nil
-					formatted.stack_trace = custom.error_stack or ""
-					formatted.host = attrs.host or "unknown"
-					formatted.env = attrs.env or self.config.env or "unknown"
-				else
-					formatted.title = "Unknown error"
-					formatted.message = ""
-					formatted.service = self.config.service or "unknown"
-					formatted.status = "unknown"
-					formatted.error_source = "unknown"
-				end
+				formatted.title = custom.error.message or custom.error_title or ""
+				formatted.message = custom.error.message or ""
+				formatted.service = attrs.service or self.config.service or "unknown"
+				formatted.status = custom.error.type or "unknown"
+				formatted.timestamp = attrs.start_timestamp or attrs.timestamp
+				formatted.last_seen = attrs.end_timestamp or attrs.timestamp
+				formatted.error_source = custom.error.type or "unknown"
+				formatted.file = custom.error.file or nil
+				formatted.line = custom.error.line or nil
+				formatted.stack_trace = custom.error_stack or ""
+				formatted.host = attrs.host or "unknown"
+				formatted.env = attrs.env or self.config.env or "unknown"
+			else
+				formatted.title = "Unknown error"
+				formatted.message = ""
+				formatted.service = self.config.service or "unknown"
+				formatted.status = "unknown"
+				formatted.error_source = "unknown"
+			end
 
-				table.insert(errors, formatted)
-				check_complete()
-			end)
+			table.insert(errors, formatted)
+		end
+
+		-- Sort by occurrences descending
+		table.sort(errors, function(a, b)
+			return (a.occurrences or 0) > (b.occurrences or 0)
+		end)
+
+		if callback then
+			callback(errors, nil)
 		end
 	end)
 end
