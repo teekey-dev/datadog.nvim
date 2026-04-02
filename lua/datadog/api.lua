@@ -269,6 +269,10 @@ function M:fetch_errors(callback)
       local function check_complete()
         pending = pending - 1
         if pending == 0 then
+          -- Sort errors by occurrences (total_count) in descending order
+          table.sort(errors, function(a, b)
+            return (a.occurrences or 0) > (b.occurrences or 0)
+          end)
           print("[Datadog API] Returning " .. #errors .. " errors")
           if callback then
             callback(errors, nil)
