@@ -259,30 +259,28 @@ function M:fetch_errors(callback)
 					id = issue.id,
 					occurrences = issue.total_count,
 				}
-				
+
 				if span and not span_err then
-				local data_wrapper = span.data or {}
-				local attrs = data_wrapper.attributes or {}
-				local custom = attrs.custom or {}
-				
-				print("[Datadog] span: " .. vim.inspect(span))
-				print("[Datadog] data_wrapper: " .. vim.inspect(data_wrapper))
-				print("[Datadog] attrs: " .. vim.inspect(attrs))
-				print("[Datadog] custom: " .. vim.inspect(custom))
-				
-				formatted.title = custom.error_message or custom.error_title or ""
-				formatted.message = custom.error_message or ""
-				formatted.service = attrs.service or self.config.service or "unknown"
-				formatted.status = custom.error_type or "unknown"
-				formatted.timestamp = attrs.start_timestamp or attrs.timestamp
-				formatted.last_seen = attrs.end_timestamp or attrs.timestamp
-				formatted.error_source = custom.error_type or "unknown"
-				formatted.file = custom.error_file or nil
-				formatted.line = custom.error_line or nil
-				formatted.stack_trace = custom.error_stack or ""
-				formatted.host = attrs.host or "unknown"
-				formatted.env = attrs.env or self.config.env or "unknown"
-			else
+					local attrs = span.attributes or {}
+					local custom = attrs.custom or {}
+
+					print("[Datadog] span: " .. vim.inspect(span))
+					print("[Datadog] attrs: " .. vim.inspect(attrs))
+					print("[Datadog] custom: " .. vim.inspect(custom))
+
+					formatted.title = custom.error_message or custom.error_title or ""
+					formatted.message = custom.error_message or ""
+					formatted.service = attrs.service or self.config.service or "unknown"
+					formatted.status = custom.error_type or "unknown"
+					formatted.timestamp = attrs.start_timestamp or attrs.timestamp
+					formatted.last_seen = attrs.end_timestamp or attrs.timestamp
+					formatted.error_source = custom.error_type or "unknown"
+					formatted.file = custom.error_file or nil
+					formatted.line = custom.error_line or nil
+					formatted.stack_trace = custom.error_stack or ""
+					formatted.host = attrs.host or "unknown"
+					formatted.env = attrs.env or self.config.env or "unknown"
+				else
 					formatted.title = "Unknown error"
 					formatted.message = ""
 					formatted.service = self.config.service or "unknown"
