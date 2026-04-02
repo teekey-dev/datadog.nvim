@@ -201,7 +201,11 @@ function M:fetch_errors(callback)
   local time_range = self.config.query and self.config.query.time_range or "1w"
   local from_time, to_time = self:_parse_time_range(time_range)
   
-  -- Build request body in correct format
+  -- Convert to ISO8601 format for span search API
+  local from_iso = os.date("!%Y-%m-%dT%H:%M:%SZ", from_time / 1000)
+  local to_iso = os.date("!%Y-%m-%dT%H:%M:%SZ", to_time / 1000)
+  
+  -- Build request body for error tracking search (to get issue IDs)
   local request_body = {
     data = {
       type = "search_request",
@@ -217,6 +221,7 @@ function M:fetch_errors(callback)
   
   print("[Datadog API] Full Query: " .. vim.json.encode(request_body))
   
+  -- First, get issue IDs from error tracking API
   self:_request("POST", "error-tracking/issues/search", request_body, function(response, err)
     if err then
       print("[Datadog API] fetch_errors error: " .. vim.json.encode(err))
@@ -228,35 +233,127 @@ function M:fetch_errors(callback)
     
     -- Process and format the response from Error Tracking API
     local errors = {}
-    if response and response.data then
-      print("[Datadog API] Processing " .. #response.data .. " error tracking items")
+    if response and response.data and #response.data > 0 then
+      print("[Datadog API] Found " .. #response.data .. " error tracking issues")
       
-      -- Build included map for quick lookup
-      local included_map = {}
-      if response.included then
-        for _, inc in ipairs(response.included) do
-          if inc.id and inc.type == "issue" then
-            included_map[inc.id] = inc
+      -- Collect issue IDs
+      local issue_ids = {}
+      for _, item in ipairs(response.data) do
+        local total_count = (item.attributes and item.attributes.total_count) or 0
+        if total_count > 0 then
+          local relationships = item.relationships or {}
+          local issue_data = relationships.issue and relationships.issue.data or {}
+          local issue_id = issue_data.id or item.id
+          if issue_id then
+            table.insert(issue_ids, {
+              id = issue_id,
+              total_count = total_count,
+            })
           end
         end
       end
       
-      for _, item in ipairs(response.data) do
-        -- Skip items with no occurrences in current timeframe
-        local total_count = (item.attributes and item.attributes.total_count) or 0
-        if total_count > 0 then
-          local formatted = self:_format_error_tracking(item, included_map)
+      print("[Datadog API] Collected " .. #issue_ids .. " issue IDs")
+      
+      -- If no issues, return early
+      if #issue_ids == 0 then
+        print("[Datadog API] No error tracking issues found")
+        if callback then
+          callback({}, nil)
+        end
+        return
+      end
+      
+      -- Now fetch span details for each issue
+      local pending = #issue_ids
+      local function check_complete()
+        pending = pending - 1
+        if pending == 0 then
+          print("[Datadog API] Returning " .. #errors .. " errors")
+          if callback then
+            callback(errors, nil)
+          end
+        end
+      end
+      
+      for _, issue in ipairs(issue_ids) do
+        -- Build span search request for this issue
+        local span_request = {
+          data = {
+            attributes = {
+              filter = {
+                from = from_iso,
+                to = to_iso,
+                query = "@issue.id:" .. issue.id,
+              },
+              options = {
+                timezone = "UTC",
+              },
+              page = {
+                limit = 1,
+              },
+              sort = "-timestamp",
+            },
+            type = "search_request",
+          }
+        }
+        
+        self:_request("POST", "spans/events/search", span_request, function(span_response, span_err)
+          if span_err then
+            print("[Datadog API] Span search error for issue " .. issue.id .. ": " .. vim.json.encode(span_err))
+            check_complete()
+            return
+          end
+          
+          local formatted = {
+            id = issue.id,
+            occurrences = issue.total_count,
+          }
+          
+          -- Extract details from first span if available
+          if span_response and span_response.data and #span_response.data > 0 then
+            local span = span_response.data[1]
+            local attrs = span.attributes or {}
+            local span_attrs = attrs.attributes or {}
+            
+            formatted.title = span_attrs["error.message"] or span_attrs["error.title"] or ""
+            formatted.message = span_attrs["error.message"] or ""
+            formatted.service = attrs.service or self.config.service or "unknown"
+            formatted.status = span_attrs["error.type"] or "unknown"
+            formatted.timestamp = attrs.start_timestamp or attrs.timestamp
+            formatted.last_seen = attrs.end_timestamp or attrs.timestamp
+            formatted.error_source = span_attrs["error.type"] or "unknown"
+            formatted.file = span_attrs["file.path"] or nil
+            formatted.line = span_attrs["file.line"] or nil
+            formatted.stack_trace = span_attrs["error.stack"] or ""
+            formatted.host = attrs.host or "unknown"
+            formatted.env = attrs.env or self.config.env or "unknown"
+          else
+            -- Use defaults if no span found
+            formatted.title = "Unknown error"
+            formatted.message = ""
+            formatted.service = self.config.service or "unknown"
+            formatted.status = "unknown"
+            formatted.timestamp = nil
+            formatted.last_seen = nil
+            formatted.error_source = "unknown"
+            formatted.file = nil
+            formatted.line = nil
+            formatted.stack_trace = ""
+            formatted.host = "unknown"
+            formatted.env = self.config.env or "unknown"
+          end
+          
           table.insert(errors, formatted)
           print("[Datadog API] Formatted error: " .. vim.json.encode(formatted))
-        end
+          check_complete()
+        end)
       end
     else
       print("[Datadog API] No data in response or empty response")
-    end
-    
-    print("[Datadog API] Returning " .. #errors .. " errors")
-    if callback then
-      callback(errors, nil)
+      if callback then
+        callback({}, nil)
+      end
     end
   end)
 end
