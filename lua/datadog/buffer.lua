@@ -71,7 +71,7 @@ end
 
 -- Move cursor to next/previous error
 function M.move_cursor(direction)
-  if not M.split or not M.split:is_mounted() then
+  if not M.split or not M.split._.mounted then
     return
   end
   
@@ -95,7 +95,7 @@ end
 
 -- Refresh errors from Datadog API
 function M.refresh_errors()
-  if not M.split or not M.split:is_mounted() then
+  if not M.split or not M.split._.mounted then
     return
   end
   
@@ -111,7 +111,7 @@ function M.refresh_errors()
   api_client:fetch_errors(function(errors, err)
     -- Schedule all UI operations to run on the main event loop
     vim.schedule(function()
-      if not M.split or not M.split:is_mounted() then
+      if not M.split or not M.split._.mounted then
         return
       end
       
@@ -207,7 +207,7 @@ end
 
 -- Navigate to the source file of the error under cursor
 function M.navigate_to_error()
-  if not M.split or not M.split:is_mounted() then
+  if not M.split or not M.split._.mounted then
     return
   end
   
@@ -253,7 +253,7 @@ end
 
 -- Close the errors split
 function M.close_buffer()
-  if M.split and M.split:is_mounted() then
+  if M.split and M.split._.mounted then
     M.split:unmount()
     M.split = nil
   end
