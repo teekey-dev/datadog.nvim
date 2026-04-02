@@ -8,14 +8,14 @@ function M:search_by_issues(issue_ids, from_iso, to_iso, callback)
 		callback({}, nil)
 		return
 	end
-	
+
 	-- Build OR query for all issue IDs
 	local query_parts = {}
 	for _, issue in ipairs(issue_ids) do
 		table.insert(query_parts, "@issue.id:" .. issue.id)
 	end
 	local query = "(" .. table.concat(query_parts, " OR ") .. ")"
-	
+
 	local request_body = {
 		data = {
 			attributes = {
@@ -35,13 +35,15 @@ function M:search_by_issues(issue_ids, from_iso, to_iso, callback)
 			type = "search_request",
 		},
 	}
-	
+
 	self._api:_request("POST", "spans/events/search", request_body, function(response, err)
+		print("[Datadog Spans] Response: " .. vim.inspect(response))
+
 		if err then
 			callback(nil, err)
 			return
 		end
-		
+
 		-- Build a map of issue_id -> span data
 		local spans_map = {}
 		if response and response.data then
@@ -52,7 +54,7 @@ function M:search_by_issues(issue_ids, from_iso, to_iso, callback)
 				end
 			end
 		end
-		
+
 		callback(spans_map, nil)
 	end)
 end
@@ -78,13 +80,13 @@ function M:search_by_issue(issue_id, from_iso, to_iso, callback)
 			type = "search_request",
 		},
 	}
-	
+
 	self._api:_request("POST", "spans/events/search", request_body, function(response, err)
 		if err then
 			callback(nil, err)
 			return
 		end
-		
+
 		if response and response.data and #response.data > 0 then
 			callback(response.data[1], nil)
 		else
