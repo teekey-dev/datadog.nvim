@@ -145,28 +145,28 @@ function M.render_table(bufnr, errors)
   -- Define columns
   local columns = {
     {
-      id = 'count',
+      accessor_key = 'count',
       header = 'COUNT',
       width = 10,
       align = 'right',
     },
     {
-      id = 'type',
+      accessor_key = 'type',
       header = 'TYPE',
       width = 12,
     },
     {
-      id = 'service',
+      accessor_key = 'service',
       header = 'SERVICE',
       width = 20,
     },
     {
-      id = 'message',
+      accessor_key = 'message',
       header = 'MESSAGE',
       width = 40,
     },
     {
-      id = 'file',
+      accessor_key = 'file',
       header = 'FILE',
       width = 30,
     },
