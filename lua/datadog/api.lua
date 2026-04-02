@@ -260,10 +260,9 @@ function M:fetch_errors(callback)
 					occurrences = issue.total_count,
 				}
 				
-				print("[Datadog] Span for issue " .. issue.id .. ": " .. vim.json.encode(span))
-				
 				if span and not span_err then
-				local attrs = span.attributes or {}
+				local data_wrapper = span.data or {}
+				local attrs = data_wrapper.attributes or {}
 				local custom = attrs.custom or {}
 				
 				formatted.title = custom.error_message or custom.error_title or ""

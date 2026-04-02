@@ -17,10 +17,7 @@ function M:search(query, from_time, to_time, callback)
 		},
 	}
 
-	self._api:_request("POST", "error-tracking/issues/search", request_body, function(response, err)
-		print("[Datadog Error Tracking] Response: " .. vim.json.encode(response))
-		callback(response, err)
-	end)
+	self._api:_request("POST", "error-tracking/issues/search", request_body, callback)
 end
 
 return function(api)
