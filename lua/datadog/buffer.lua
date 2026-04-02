@@ -1,5 +1,5 @@
 -- Buffer management for datadog.nvim
--- Handles creation and display of the errors buffer using Nui
+-- Handles creation and display of the errors buffer using Nui Split
 
 local M = {}
 
@@ -8,15 +8,15 @@ local api = require('datadog.api')
 local utils = require('datadog.utils')
 
 -- Nui components
-local Popup = require('nui.popup')
+local Split = require('nui.split')
 
 -- Buffer state
-M.popup = nil
+M.split = nil
 M.errors = {}
 M.error_line_map = {}
 
--- Format errors for display in the popup
-function M.format_errors_for_popup(errors)
+-- Format errors for display in the split
+function M.format_errors_for_split(errors)
   local lines = {}
   M.error_line_map = {}
   
@@ -104,14 +104,13 @@ function M.format_errors_for_popup(errors)
   return lines
 end
 
--- Create and show the errors popup
+-- Create and show the errors split at the bottom
 function M.show_errors_buffer()
-  -- Create popup
-  M.popup = Popup({
-    position = { row = "100%", col = "100%" },
-    size = { width = 80, height = 20 },
-    relative = { type = "editor", anchor = "NW" },
-    anchor = "NW",
+  -- Create split at the bottom
+  M.split = Split({
+    position = "50%",
+    size = 15,
+    relative = "editor",
     border = {
       style = "rounded",
       text = {
@@ -119,37 +118,42 @@ function M.show_errors_buffer()
         top_align = "center",
       },
     },
-    highlight = "Normal",
-    zindex = 100,
   })
   
   -- Set up key mappings
-  M.popup:map("n", "q", function()
+  M.split:map("n", "q", function()
     M.close_buffer()
   end, { noremap = true })
   
-  M.popup:map("n", "<ESC>", function()
+  M.split:map("n", "<ESC>", function()
     M.close_buffer()
   end, { noremap = true })
   
-  M.popup:map("n", "r", function()
+  M.split:map("n", "r", function()
     M.refresh_errors()
   end, { noremap = true })
   
-  M.popup:map("n", "<CR>", function()
+  M.split:map("n", "<CR>", function()
     M.navigate_to_error()
   end, { noremap = true })
   
-  M.popup:map("n", "j", function()
+  M.split:map("n", "j", function()
     M.move_cursor(1)
   end, { noremap = true })
   
-  M.popup:map("n", "k", function()
+  M.split:map("n", "k", function()
     M.move_cursor(-1)
   end, { noremap = true })
   
-  -- Show the popup
-  M.popup:mount()
+  -- Show the split
+  M.split:mount()
+  
+  -- Set buffer options
+  local bufnr = M.split.bufnr
+  vim.api.nvim_buf_set_option(bufnr, 'buftype', 'nofile')
+  vim.api.nvim_buf_set_option(bufnr, 'swapfile', false)
+  vim.api.nvim_buf_set_option(bufnr, 'modifiable', true)
+  vim.api.nvim_buf_set_option(bufnr, 'bufhidden', 'hide')
   
   -- Load and display errors
   M.refresh_errors()
@@ -157,7 +161,7 @@ end
 
 -- Move cursor to next/previous error
 function M.move_cursor(direction)
-  if not M.popup or not M.popup:is_mounted() then
+  if not M.split or not M.split:is_mounted() then
     return
   end
   
@@ -165,10 +169,10 @@ function M.move_cursor(direction)
     return
   end
   
-  local cursor = M.popup:win().cursor
+  local cursor = M.split:win().cursor
   local new_line = cursor[1] + direction
   
-  local buf_line_count = vim.api.nvim_buf_line_count(M.popup.bufnr)
+  local buf_line_count = vim.api.nvim_buf_line_count(M.split.bufnr)
   
   if new_line < 1 then
     new_line = 1
@@ -176,17 +180,19 @@ function M.move_cursor(direction)
     new_line = buf_line_count
   end
   
-  M.popup:win().cursor = { new_line, 0 }
+  M.split:win().cursor = { new_line, 0 }
 end
 
 -- Refresh errors from Datadog API
 function M.refresh_errors()
-  if not M.popup or not M.popup:is_mounted() then
+  if not M.split or not M.split:is_mounted() then
     return
   end
   
+  local bufnr = M.split.bufnr
+  
   -- Show loading message
-  vim.api.nvim_buf_set_lines(M.popup.bufnr, 0, -1, false, {
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
     " Loading errors from Datadog...",
   })
   
@@ -195,12 +201,14 @@ function M.refresh_errors()
   api_client:fetch_errors(function(errors, err)
     -- Schedule all UI operations to run on the main event loop
     vim.schedule(function()
-      if not M.popup or not M.popup:is_mounted() then
+      if not M.split or not M.split:is_mounted() then
         return
       end
       
+      local bufnr = M.split.bufnr
+      
       if err then
-        vim.api.nvim_buf_set_lines(M.popup.bufnr, 0, -1, false, {
+        vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
           string.format(" Error: %s", err.error or "Unknown error"),
           "",
           " Press 'r' to retry or 'q' to close",
@@ -212,20 +220,23 @@ function M.refresh_errors()
       M.errors = errors or {}
       
       -- Format and display errors
-      local lines = M.format_errors_for_popup(M.errors)
+      local lines = M.format_errors_for_split(M.errors)
       
-      vim.api.nvim_buf_set_lines(M.popup.bufnr, 0, -1, false, lines)
+      vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+      
+      -- Make buffer read-only
+      vim.api.nvim_buf_set_option(bufnr, 'modifiable', false)
     end)
   end)
 end
 
 -- Navigate to the source file of the error under cursor
 function M.navigate_to_error()
-  if not M.popup or not M.popup:is_mounted() then
+  if not M.split or not M.split:is_mounted() then
     return
   end
   
-  local cursor = M.popup:win().cursor
+  local cursor = M.split:win().cursor
   local line_num = cursor[1]
   
   -- Get error index from line map
@@ -244,7 +255,7 @@ function M.navigate_to_error()
     return
   end
   
-  -- Close the popup
+  -- Close the split
   M.close_buffer()
   
   -- Open the file
@@ -259,11 +270,11 @@ function M.navigate_to_error()
   end
 end
 
--- Close the errors popup
+-- Close the errors split
 function M.close_buffer()
-  if M.popup and M.popup:is_mounted() then
-    M.popup:unmount()
-    M.popup = nil
+  if M.split and M.split:is_mounted() then
+    M.split:unmount()
+    M.split = nil
   end
 end
 
