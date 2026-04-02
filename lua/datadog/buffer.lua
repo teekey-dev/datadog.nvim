@@ -129,15 +129,17 @@ function M.show_errors_buffer()
   -- Set split height to 15 lines
   vim.cmd('resize 15')
   
-  -- Set up key mappings
-  local opts = { noremap = true, silent = true, buffer = M.bufnr }
+  -- Set up key mappings using nvim_set_keymap (deprecated but works)
+  local opts = { noremap = true, silent = true }
   
-  vim.api.nvim_buf_set_keymap(M.bufnr, 'n', 'q', '<cmd>lua require("datadog.buffer").close_buffer()<CR>', opts)
-  vim.api.nvim_buf_set_keymap(M.bufnr, 'n', '<ESC>', '<cmd>lua require("datadog.buffer").close_buffer()<CR>', opts)
-  vim.api.nvim_buf_set_keymap(M.bufnr, 'n', 'r', '<cmd>lua require("datadog.buffer").refresh_errors()<CR>', opts)
-  vim.api.nvim_buf_set_keymap(M.bufnr, 'n', '<CR>', '<cmd>lua require("datadog.buffer").navigate_to_error()<CR>', opts)
-  vim.api.nvim_buf_set_keymap(M.bufnr, 'n', 'j', '<cmd>lua require("datadog.buffer").move_cursor(1)<CR>', opts)
-  vim.api.nvim_buf_set_keymap(M.bufnr, 'n', 'k', '<cmd>lua require("datadog.buffer").move_cursor(-1)<CR>', opts)
+  vim.api.nvim_command(string.format("augroup datadog_keys_%d | autocmd! | augroup END", M.bufnr))
+  
+  vim.api.nvim_set_keymap('n', 'q', '<cmd>lua require("datadog.buffer").close_buffer()<CR>', opts)
+  vim.api.nvim_set_keymap('n', '<ESC>', '<cmd>lua require("datadog.buffer").close_buffer()<CR>', opts)
+  vim.api.nvim_set_keymap('n', 'r', '<cmd>lua require("datadog.buffer").refresh_errors()<CR>', opts)
+  vim.api.nvim_set_keymap('n', '<CR>', '<cmd>lua require("datadog.buffer").navigate_to_error()<CR>', opts)
+  vim.api.nvim_set_keymap('n', 'j', '<cmd>lua require("datadog.buffer").move_cursor(1)<CR>', opts)
+  vim.api.nvim_set_keymap('n', 'k', '<cmd>lua require("datadog.buffer").move_cursor(-1)<CR>', opts)
   
   -- Load and display errors
   M.refresh_errors()
