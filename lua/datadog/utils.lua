@@ -24,7 +24,7 @@ function M.format_timestamp(timestamp_str)
   })
   
   local now = os.time()
-  local diff = difftime(now, log_time)
+  local diff = os.difftime(now, log_time)
   
   -- Format based on time difference
   if diff < 60 then
