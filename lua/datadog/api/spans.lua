@@ -48,7 +48,12 @@ function M:search_by_issues(issue_ids, from_iso, to_iso, callback)
 		local spans_map = {}
 		if response and response.data then
 			for _, span in ipairs(response.data) do
-				local issue_id = span.data and span.data.attributes and span.data.attributes.issue_id
+				local issue_id = span.data
+						and span.data.attributes
+						and span.data.attributes.custom
+						and span.data.attributes.custom.issue
+						and span.data.attributes.custom.issue.id
+					or nil
 				if issue_id then
 					spans_map[issue_id] = span
 				end
