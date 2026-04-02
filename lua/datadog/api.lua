@@ -268,15 +268,15 @@ function M:fetch_errors(callback)
 					print("[Datadog] attrs: " .. vim.inspect(attrs))
 					print("[Datadog] custom: " .. vim.inspect(custom))
 
-					formatted.title = custom.error_message or custom.error_title or ""
-					formatted.message = custom.error_message or ""
+					formatted.title = custom.error.message or custom.error_title or ""
+					formatted.message = custom.error.message or ""
 					formatted.service = attrs.service or self.config.service or "unknown"
-					formatted.status = custom.error_type or "unknown"
+					formatted.status = custom.error.type or "unknown"
 					formatted.timestamp = attrs.start_timestamp or attrs.timestamp
 					formatted.last_seen = attrs.end_timestamp or attrs.timestamp
-					formatted.error_source = custom.error_type or "unknown"
-					formatted.file = custom.error_file or nil
-					formatted.line = custom.error_line or nil
+					formatted.error_source = custom.error.type or "unknown"
+					formatted.file = custom.error.file or nil
+					formatted.line = custom.error.line or nil
 					formatted.stack_trace = custom.error_stack or ""
 					formatted.host = attrs.host or "unknown"
 					formatted.env = attrs.env or self.config.env or "unknown"
