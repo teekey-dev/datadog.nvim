@@ -62,35 +62,103 @@ function M.format_errors_for_display(errors)
     return lines
   end
   
-  -- Column headers
-  table.insert(lines, string.format("%-20s %-15s %-40s %-10s", 
-    "Timestamp", "Service", "Message", "Status"))
-  table.insert(lines, string.rep("─", 85))
-  
-  -- Error entries
+  -- Error entries with detailed information
   for _, error in ipairs(errors) do
-    local timestamp = error.timestamp or ""
-    if timestamp ~= "" then
-      -- Format timestamp to show relative time or just time part
-      timestamp = utils.format_timestamp(timestamp)
+    -- ID (truncated)
+    local id = error.id or "unknown"
+    if #id > 8 then
+      id = id:sub(1, 8) .. "..."
     end
     
+    -- Timestamp
+    local timestamp = ""
+    if error.timestamp then
+      timestamp = utils.format_timestamp(error.timestamp)
+    end
+    
+    -- Service
     local service = error.service or "unknown"
-    local message = error.message or ""
-    -- Truncate message if too long
-    if #message > 40 then
-      message = message:sub(1, 37) .. "..."
+    if #service > 20 then
+      service = service:sub(1, 17) .. "..."
     end
-    local status = error.status or "unknown"
     
-    table.insert(lines, string.format("%-20s %-15s %-40s %-10s", 
-      timestamp, service, message, status))
+    -- Status/Error Type
+    local status = error.status or error.error_source or "unknown"
+    if #status > 15 then
+      status = status:sub(1, 12) .. "..."
+    end
+    
+    -- Occurrences
+    local occurrences = error.occurrences or 0
+    
+    -- Message (title)
+    local message = error.title or error.message or ""
+    if #message > 50 then
+      message = message:sub(1, 47) .. "..."
+    end
+    
+    -- File path
+    local file = error.file or ""
+    if #file > 40 then
+      file = "..." .. file:sub(-37)
+    end
+    
+    -- Line number
+    local line = error.line or ""
+    
+    -- Stack trace (first line only)
+    local stack = error.stack_trace or ""
+    local stack_preview = ""
+    if #stack > 50 then
+      stack_preview = stack:sub(1, 47) .. "..."
+    else
+      stack_preview = stack
+    end
+    
+    -- Error type/source
+    local error_type = error.error_source or ""
+    
+    -- Host and Environment
+    local env = error.env or "unknown"
+    local host = error.host or "unknown"
+    if #host > 15 then
+      host = host:sub(1, 12) .. "..."
+    end
+    
+    -- Build formatted lines for this error entry
+    -- Line 1: ID | Timestamp | Service | Status | Occurrences
+    table.insert(lines, string.format(" %-10s │ %-12s │ %-20s │ %-15s │ %-6d ", 
+      id, timestamp, service, status, occurrences))
+    
+    -- Line 2: Message
+    table.insert(lines, string.format(" %-10s │ %s ", "", message))
+    
+    -- Line 3: File:Line
+    if file ~= "" then
+      table.insert(lines, string.format(" %-10s │ %s:%s ", "", file, line))
+    end
+    
+    -- Line 4: Error type
+    if error_type ~= "" then
+      table.insert(lines, string.format(" %-10s │ type: %s ", "", error_type))
+    end
+    
+    -- Line 5: Stack trace preview
+    if stack_preview ~= "" then
+      table.insert(lines, string.format(" %-10s │ %s ", "", stack_preview))
+    end
+    
+    -- Line 6: Host | Environment
+    table.insert(lines, string.format(" %-10s │ host: %-15s │ env: %s ", "", host, env))
+    
+    -- Separator between errors
+    table.insert(lines, string.rep("─", 100))
   end
   
   return lines
 end
 
--- Show the errors buffer
+-- Show the errors buffer in a split at the bottom
 function M.show_errors_buffer()
   -- Create buffer if it doesn't exist
   if not M.bufnr or not vim.api.nvim_buf_is_valid(M.bufnr) then
@@ -100,15 +168,24 @@ function M.show_errors_buffer()
   -- Set up mappings
   M.setup_mappings(M.bufnr)
   
-  -- Get current tabpage and open buffer in a split
-  vim.cmd('tabnew')
+  -- Open a horizontal split at the bottom
+  vim.cmd('split')
+  
+  -- Move the split to the bottom
+  vim.cmd('wincmd J')
+  
+  -- Set split height (default 15 lines)
+  vim.cmd('resize 15')
+  
+  -- Set the buffer to the window
   vim.api.nvim_win_set_buf(0, M.bufnr)
   M.winid = vim.api.nvim_get_current_win()
   
   -- Set window options
-  vim.api.nvim_win_set_option(M.winid, 'wrap', false)
-  vim.api.nvim_win_set_option(M.winid, 'number', true)
-  vim.api.nvim_win_set_option(M.winid, 'relativenumber', true)
+  vim.api.nvim_win_set_option(M.winid, 'wrap', true)
+  vim.api.nvim_win_set_option(M.winid, 'number', false)
+  vim.api.nvim_win_set_option(M.winid, 'relativenumber', false)
+  vim.api.nvim_win_set_option(M.winid, 'cursorline', true)
   
   -- Load and display errors
   M.refresh_errors()
@@ -177,9 +254,24 @@ function M.navigate_to_error()
   local cursor = vim.api.nvim_win_get_cursor(0)
   local line_num = cursor[1]
   
-  -- Account for header lines (timestamp, service, message, status headers + separator)
-  local header_lines = 4 -- Header, separator, empty line, column headers, separator
-  local error_index = line_num - header_lines
+  -- New format: 2 header lines, then 7 lines per error (6 info lines + 1 separator)
+  local header_lines = 2
+  local lines_per_error = 7
+  
+  -- Find which error we're on by counting back through separators
+  local current_line = line_num
+  local error_index = 0
+  
+  -- Go back through the buffer to find which error we're on
+  while current_line > header_lines do
+    -- Check if this is a separator line (all dashes)
+    local line_content = vim.api.nvim_buf_get_lines(M.bufnr, current_line - 1, current_line, false)[1]
+    if line_content and line_content:match("^%-+$") then
+      -- This is a separator, the error is before it
+      error_index = error_index + 1
+    end
+    current_line = current_line - 1
+  end
   
   if error_index < 1 or error_index > #M.errors then
     vim.notify("No error at this line", vim.log.levels.WARN)
