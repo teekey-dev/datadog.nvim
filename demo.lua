@@ -44,17 +44,25 @@ print()
 
 -- Show what the error buffer would look like
 print("Example Error Buffer Display:")
-print("═════════════════════════════════════════════════════════════════════════════")
+print(
+	"═════════════════════════════════════════════════════════════════════════════"
+)
 print(" Datadog Error Tracking ")
-print("═════════════════════════════════════════════════════════════════════════════")
+print(
+	"═════════════════════════════════════════════════════════════════════════════"
+)
 print("")
 print(" Timestamp              Service         Message                                 Status")
-print("═════════════════════════════════════════════════════════════════════════════")
+print(
+	"═════════════════════════════════════════════════════════════════════════════"
+)
 print(" 5m ago                 web-api         Connection timeout to database          error")
 print(" 12m ago                payment-service Invalid card number format              warning")
 print(" 1h ago                 user-service    Null pointer exception in login handler error")
 print("")
-print("═════════════════════════════════════════════════════════════════════════════")
+print(
+	"═════════════════════════════════════════════════════════════════════════════"
+)
 print("Press <Enter> to navigate to source file, 'r' to refresh, 'q' to close")
 print()
 
