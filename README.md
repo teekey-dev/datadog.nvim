@@ -19,7 +19,7 @@ use {
   'teekey-dev/datadog.nvim',
   requires = {
     'nvim-lua/plenary.nvim', -- For HTTP requests
-    'nvim-tree/nui.nvim',    -- For popup UI
+    'MunifTanjim/nui.nvim',    -- For popup UI
     'nvim-web-devicons',     -- Optional: for file icons
   },
   config = function()
@@ -48,7 +48,7 @@ use {
   'teekey-dev/datadog.nvim',
   dependencies = {
     'nvim-lua/plenary.nvim',
-    'nvim-tree/nui.nvim',    -- For popup UI
+    'MunifTanjim/nui.nvim',    -- For popup UI
     'nvim-web-devicons', -- Optional
   },
   opts = {
