@@ -235,9 +235,9 @@ function M:fetch_errors(callback)
 			end
 			return
 		end
-
-	-- Fetch span details for all issues in one call
-	self.spans:search_by_issues(issue_ids, from_iso, to_iso, function(spans_map, err)
+		
+		-- Fetch span details for all issues in one call
+		self.spans:search_by_issues(issue_ids, from_iso, to_iso, function(spans_map, err)
 		if err then
 			if callback then
 				callback(nil, err)
