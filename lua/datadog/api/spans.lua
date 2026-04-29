@@ -2,63 +2,38 @@
 
 local M = {}
 
--- Search spans by multiple issue IDs at once
+-- Fetch one representative span per issue. Fans out one search per issue in
+-- parallel rather than a single OR'd query — a single OR'd `limit=N` query
+-- can be entirely consumed by spans from one noisy issue, leaving the rest
+-- of the issues without any span data.
 function M:search_by_issues(issue_ids, from_iso, to_iso, callback)
 	if #issue_ids == 0 then
 		callback({}, nil)
 		return
 	end
 
-	-- Build OR query for all issue IDs
-	local query_parts = {}
+	local spans_map = {}
+	local pending = #issue_ids
+	local first_err = nil
+
 	for _, issue in ipairs(issue_ids) do
-		table.insert(query_parts, "@issue.id:" .. issue.id)
-	end
-	local query = "(" .. table.concat(query_parts, " OR ") .. ")"
+		self:search_by_issue(issue.id, from_iso, to_iso, function(span, err)
+			if err and not first_err then
+				first_err = err
+			elseif span then
+				spans_map[issue.id] = span
+			end
 
-	local request_body = {
-		data = {
-			attributes = {
-				filter = {
-					from = from_iso,
-					to = to_iso,
-					query = query,
-				},
-				options = {
-					timezone = "UTC",
-				},
-				page = {
-					limit = #issue_ids,
-				},
-				sort = "-timestamp",
-			},
-			type = "search_request",
-		},
-	}
-
-	self._api:_request("POST", "spans/events/search", request_body, function(response, err)
-		if err then
-			callback(nil, err)
-			return
-		end
-
-		-- Build a map of issue_id -> span data
-		local spans_map = {}
-		if response and response.data then
-			for _, span in ipairs(response.data) do
-				local issue_id = span.attributes
-						and span.attributes.custom
-						and span.attributes.custom.issue
-						and span.attributes.custom.issue.id
-					or nil
-				if issue_id then
-					spans_map[issue_id] = span
+			pending = pending - 1
+			if pending == 0 then
+				if first_err then
+					callback(nil, first_err)
+				else
+					callback(spans_map, nil)
 				end
 			end
-		end
-
-		callback(spans_map, nil)
-	end)
+		end)
+	end
 end
 
 -- Search spans by issue ID (single)

@@ -20,7 +20,8 @@ M._fallback_split = nil -- when terminal is too short for side-by-side
 M._autocmd_group = nil
 
 local MIN_LINES = 25
-local LAYOUT_HEIGHT = 20
+local LAYOUT_HEIGHT_PCT = "80%" -- of editor height; the panel dominates the screen
+local FALLBACK_HEIGHT = 20 -- used by the list-only fallback split when terminal is too short
 local LIST_HEADER_LINES = 2 -- Nui Table renders a header row + separator
 
 -- Forward declarations
@@ -227,7 +228,7 @@ local function mount_side_by_side()
 			text = { top = " Datadog Errors ", top_align = "center" },
 		},
 		buf_options = { modifiable = false, readonly = false },
-		win_options = { wrap = false },
+		win_options = { wrap = false, cursorline = true, number = false, relativenumber = false },
 	})
 
 	M.detail_popup = Popup({
@@ -243,7 +244,7 @@ local function mount_side_by_side()
 			},
 		},
 		buf_options = { modifiable = false, readonly = false },
-		win_options = { wrap = false },
+		win_options = { wrap = false, cursorline = false, number = false, relativenumber = false },
 	})
 
 	-- Float-mode layout pinned to the bottom of the editor. (Popup-children
@@ -254,7 +255,7 @@ local function mount_side_by_side()
 			relative = "editor",
 			anchor = "SW",
 			position = { row = "100%", col = 0 },
-			size = { width = "100%", height = LAYOUT_HEIGHT },
+			size = { width = "100%", height = LAYOUT_HEIGHT_PCT },
 		},
 		Layout.Box({
 			Layout.Box(M.list_popup, { size = "60%" }),
@@ -270,7 +271,7 @@ local function mount_fallback_list_only()
 	M._fallback_split = Split({
 		relative = "editor",
 		position = "bottom",
-		size = LAYOUT_HEIGHT,
+		size = FALLBACK_HEIGHT,
 		border = {
 			style = "rounded",
 			text = { top = " Datadog Errors ", top_align = "center" },
@@ -361,6 +362,14 @@ function M.show_errors_buffer()
 		pcall(vim.api.nvim_buf_set_option, M.list_popup.bufnr, "buftype", "nofile")
 		pcall(vim.api.nvim_buf_set_option, M.list_popup.bufnr, "swapfile", false)
 		pcall(vim.api.nvim_buf_set_option, M.list_popup.bufnr, "bufhidden", "hide")
+	end
+
+	-- Cursorline on the list window so the whole row highlights as the cursor
+	-- moves (the fallback split path doesn't go through Popup's win_options).
+	if M.list_popup and M.list_popup.winid and vim.api.nvim_win_is_valid(M.list_popup.winid) then
+		pcall(vim.api.nvim_win_set_option, M.list_popup.winid, "cursorline", true)
+		pcall(vim.api.nvim_win_set_option, M.list_popup.winid, "number", false)
+		pcall(vim.api.nvim_win_set_option, M.list_popup.winid, "relativenumber", false)
 	end
 
 	setup_keymaps()
