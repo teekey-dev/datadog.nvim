@@ -299,6 +299,13 @@ function M:fetch_errors(callback)
 		-- fallback when the per-issue spans search returns no representative
 		-- span (which happens when the issue's exemplar spans have aged out
 		-- of the spans index even though Error Tracking still tracks them).
+		if vim.g.datadog_debug and response.data and response.data[1] then
+			vim.notify(
+				"[Datadog Error Tracking] first issue: " .. vim.inspect(response.data[1]),
+				vim.log.levels.INFO
+			)
+		end
+
 		local issue_ids = {}
 		for _, item in ipairs(response.data) do
 			local attrs = item.attributes or {}

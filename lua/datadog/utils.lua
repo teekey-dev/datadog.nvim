@@ -38,11 +38,37 @@ function M.format_timestamp(timestamp_str)
 	return format_relative(os.difftime(os.time(), log_time))
 end
 
--- Format ms-since-epoch to relative time (Datadog Error Tracking returns these as numbers)
+-- Format an ms-since-epoch timestamp to relative time. Accepts:
+--   - number: ms-epoch (the documented int64 form)
+--   - string of digits: ms-epoch wrapped in quotes (some JSON decoders
+--     stringify int64 to avoid double-precision loss)
+--   - ISO 8601 string: defers to format_timestamp
 function M.format_timestamp_ms(ms)
-	if not ms or type(ms) ~= "number" or ms <= 0 then
+	if ms == nil or ms == "" or ms == vim.NIL then
 		return "unknown"
 	end
+
+	if type(ms) == "string" then
+		-- Numeric string?
+		local n = tonumber(ms)
+		if n then
+			ms = n
+		else
+			-- ISO string fallback. Only return the formatted result when it
+			-- actually parsed; format_timestamp returns the raw input on
+			-- parse failure, which we want to surface as "unknown" instead.
+			local rel = M.format_timestamp(ms)
+			if rel:match("ago$") then
+				return rel
+			end
+			return "unknown"
+		end
+	end
+
+	if type(ms) ~= "number" or ms <= 0 then
+		return "unknown"
+	end
+
 	return format_relative(os.difftime(os.time(), math.floor(ms / 1000)))
 end
 
