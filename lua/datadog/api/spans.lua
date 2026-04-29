@@ -37,8 +37,6 @@ function M:search_by_issues(issue_ids, from_iso, to_iso, callback)
 	}
 
 	self._api:_request("POST", "spans/events/search", request_body, function(response, err)
-		print("[Datadog Spans] Response: " .. vim.inspect(response))
-
 		if err then
 			callback(nil, err)
 			return
@@ -48,11 +46,10 @@ function M:search_by_issues(issue_ids, from_iso, to_iso, callback)
 		local spans_map = {}
 		if response and response.data then
 			for _, span in ipairs(response.data) do
-				local issue_id = span.data
-						and span.data.attributes
-						and span.data.attributes.custom
-						and span.data.attributes.custom.issue
-						and span.data.attributes.custom.issue.id
+				local issue_id = span.attributes
+						and span.attributes.custom
+						and span.attributes.custom.issue
+						and span.attributes.custom.issue.id
 					or nil
 				if issue_id then
 					spans_map[issue_id] = span

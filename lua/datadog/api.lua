@@ -94,11 +94,6 @@ end
 function M:_request(method, endpoint, data, callback)
 	local url = self:_build_url(endpoint)
 
-	print(string.format("[Datadog API] Request: %s %s", method, url))
-	if data then
-		print("[Datadog API] Request body: " .. vim.json.encode(data))
-	end
-
 	local args = {
 		"-X",
 		method,
@@ -215,7 +210,8 @@ function M:fetch_errors(callback)
 		-- Collect issue IDs
 		local issue_ids = {}
 		for _, item in ipairs(response.data) do
-			local total_count = (item.attributes and item.attributes.total_count) or 0
+			local attrs = item.attributes or {}
+			local total_count = attrs.total_count or 0
 			if total_count > 0 then
 				local relationships = item.relationships or {}
 				local issue_data = relationships.issue and relationships.issue.data or {}
@@ -224,6 +220,10 @@ function M:fetch_errors(callback)
 					table.insert(issue_ids, {
 						id = issue_id,
 						total_count = total_count,
+						first_seen = attrs.first_seen,
+						last_seen = attrs.last_seen,
+						first_seen_version = attrs.first_seen_version,
+						last_seen_version = attrs.last_seen_version,
 					})
 				end
 			end
@@ -253,23 +253,27 @@ function M:fetch_errors(callback)
 				local formatted = {
 					id = issue.id,
 					occurrences = issue.total_count,
+					first_seen = issue.first_seen,
+					last_seen = issue.last_seen,
+					first_seen_version = issue.first_seen_version,
+					last_seen_version = issue.last_seen_version,
 				}
 
 				if span then
-					local data_wrapper = span.data or {}
-					local attrs = data_wrapper.attributes or {}
+					local attrs = span.attributes or {}
 					local custom = attrs.custom or {}
+					local custom_error = custom.error or {}
 
-					formatted.title = custom.error.message or custom.error_title or ""
-					formatted.message = custom.error.message or ""
+					formatted.title = custom_error.message or custom.error_title or ""
+					formatted.message = custom_error.message or ""
 					formatted.service = attrs.service or self.config.service or "unknown"
-					formatted.status = custom.error.type or "unknown"
+					formatted.status = custom_error.type or "unknown"
 					formatted.timestamp = attrs.start_timestamp or attrs.timestamp
-					formatted.last_seen = attrs.end_timestamp or attrs.timestamp
-					formatted.error_source = custom.error.type or "unknown"
-					formatted.file = custom.error.file or nil
-					formatted.line = custom.error.line or nil
-					formatted.stack_trace = custom.error_stack or ""
+					formatted.span_last_seen = attrs.end_timestamp or attrs.timestamp
+					formatted.error_source = custom_error.type or "unknown"
+					formatted.file = custom_error.file or nil
+					formatted.line = custom_error.line or nil
+					formatted.stack_trace = custom_error.stack or custom.error_stack or ""
 					formatted.host = attrs.host or "unknown"
 					formatted.env = attrs.env or self.config.env or "unknown"
 				else
@@ -278,6 +282,9 @@ function M:fetch_errors(callback)
 					formatted.service = self.config.service or "unknown"
 					formatted.status = "unknown"
 					formatted.error_source = "unknown"
+					formatted.stack_trace = ""
+					formatted.host = "unknown"
+					formatted.env = self.config.env or "unknown"
 				end
 
 				table.insert(errors, formatted)

@@ -2,6 +2,18 @@
 
 local M = {}
 
+local function format_relative(seconds)
+	if seconds < 60 then
+		return string.format("%ds ago", seconds)
+	elseif seconds < 3600 then
+		return string.format("%dm ago", math.floor(seconds / 60))
+	elseif seconds < 86400 then
+		return string.format("%dh ago", math.floor(seconds / 3600))
+	else
+		return string.format("%dd ago", math.floor(seconds / 86400))
+	end
+end
+
 -- Format timestamp to relative time or readable format
 function M.format_timestamp(timestamp_str)
 	if not timestamp_str or timestamp_str == "" then
@@ -23,19 +35,45 @@ function M.format_timestamp(timestamp_str)
 		sec = tonumber(sec),
 	})
 
-	local now = os.time()
-	local diff = os.difftime(now, log_time)
+	return format_relative(os.difftime(os.time(), log_time))
+end
 
-	-- Format based on time difference
-	if diff < 60 then
-		return string.format("%ds ago", diff)
-	elseif diff < 3600 then
-		return string.format("%dm ago", math.floor(diff / 60))
-	elseif diff < 86400 then
-		return string.format("%dh ago", math.floor(diff / 3600))
-	else
-		return string.format("%dd ago", math.floor(diff / 86400))
+-- Format ms-since-epoch to relative time (Datadog Error Tracking returns these as numbers)
+function M.format_timestamp_ms(ms)
+	if not ms or type(ms) ~= "number" or ms <= 0 then
+		return "unknown"
 	end
+	return format_relative(os.difftime(os.time(), math.floor(ms / 1000)))
+end
+
+-- Truncate a string to max display width with a trailing ellipsis
+function M.truncate(s, max_width)
+	s = s or ""
+	if max_width <= 0 then
+		return ""
+	end
+	local w = vim.fn.strdisplaywidth(s)
+	if w <= max_width then
+		return s
+	end
+	-- Account for the ellipsis itself
+	local target = max_width - 1
+	-- strcharpart works on character indices; adequate for ASCII / common multi-byte
+	while vim.fn.strdisplaywidth(s) > target do
+		s = vim.fn.strcharpart(s, 0, vim.fn.strchars(s) - 1)
+		if s == "" then
+			break
+		end
+	end
+	return s .. "…"
+end
+
+-- Truncate a commit hash to 8 chars
+function M.short_commit(hash)
+	if not hash or hash == "" then
+		return ""
+	end
+	return hash:sub(1, 8)
 end
 
 -- Highlight error levels in the buffer

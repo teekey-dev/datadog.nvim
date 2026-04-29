@@ -1,14 +1,22 @@
 # datadog.nvim
 
-A Neovim plugin for displaying Datadog error tracking information in a buffer with navigation to source files.
+A Neovim plugin for browsing Datadog Error Tracking issues for the current git
+repository — list issues on the left, inspect each one (stack trace, first/last
+seen, commit hashes) in a side detail pane, and jump straight to the offending
+line in your code.
 
 ## Features
 
-- Display Datadog error logs in a dedicated Neovim buffer
-- Navigate to source files from error entries with `<Enter>`
-- Automatic refresh of error data (configurable interval)
-- Syntax highlighting for different error levels
-- Easy configuration of API keys and query parameters
+- Bottom split with **issue list (left) and detail pane (right)** — cursor on
+  the list updates the detail view as you move
+- Per-issue detail shows: error type & message, service/env/host, **first seen**
+  and **last seen** times with the **commit hashes** (`first_seen_version` /
+  `last_seen_version`) where the issue was first and most recently observed,
+  total occurrences, and the full stack trace
+- `<CR>` on any stack-frame line jumps to that `file:line` (works for Java, Go,
+  JS, Ruby, Rust, Kotlin, Python frames out of the box)
+- Issues are scoped to the current git repository (`@git.repository.id` filter),
+  with optional service/env filters
 
 ## Installation
 
@@ -68,9 +76,19 @@ Once installed and configured, use the following commands:
 - `:DatadogConfig` - Show the current plugin configuration
 
 In the errors buffer:
-- `<Enter>` - Navigate to the source file of the error under cursor
-- `r` - Refresh the error list
-- `q` or `<ESC>` - Close the errors buffer
+- On the **list** pane (left):
+  - Move with `j` / `k` (or any motion) — the detail pane updates as the cursor moves
+  - `<Enter>` - Focus the detail pane so you can browse the stack trace
+  - `r` - Refresh the error list
+  - `q` or `<ESC>` - Close the errors buffer
+- On the **detail** pane (right):
+  - `j` / `k` - Scroll the detail / stack trace
+  - `<Enter>` - Jump to `file:line` under the cursor (works on stack-frame
+    lines); falls back to the issue's primary file if the line has no frame
+  - `q` or `<ESC>` - Close the errors buffer
+
+If the terminal is shorter than 25 lines, the plugin falls back to a list-only
+view automatically.
 
 ## Configuration
 
@@ -88,11 +106,20 @@ The plugin can be configured with the following options:
 
 ## How It Works
 
-1. The plugin uses the Datadog Logs API to fetch error logs based on your query configuration
-2. Error logs are displayed in a formatted table with timestamp, service, message, and status
-3. When available, the plugin extracts file and line information from the log attributes
-4. Pressing `<Enter>` on an error entry opens the corresponding file at the relevant line
-5. The plugin can automatically refresh error data at a configurable interval
+1. On open, the plugin runs `git remote get-url origin` to find the current
+   repository URL and converts it to a Datadog
+   `@git.repository.id:github.com/owner/repo` filter.
+2. It calls `POST /api/v2/error-tracking/issues/search` with that filter (plus
+   any optional `service` / `env` filters and the configured time range) to get
+   the issues for this repo, including `first_seen` / `last_seen` timestamps and
+   `first_seen_version` / `last_seen_version` commit hashes.
+3. For each issue, it calls `POST /api/v2/spans/events/search` (in one batched
+   request, OR'd over all issue IDs) to fetch a representative span carrying
+   the file/line, error message, and full stack trace.
+4. The two responses are merged and rendered: the left pane shows the issue
+   table; the right pane shows the detail of the selected issue.
+5. `<Enter>` on a stack-frame line in the detail pane parses `file:line` from
+   that line and opens the file at the matching line.
 
 ## Requirements
 
