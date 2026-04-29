@@ -22,6 +22,7 @@ local LIST_HEADER_LINES = 1 -- single header line; data rows are contiguous
 -- Forward declarations
 local render_detail
 local close_layout
+local rerender_list_row
 
 local function set_lines(bufnr, lines)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
@@ -263,7 +264,11 @@ local function on_list_enter()
 
 			if updated then
 				M.errors[idx] = updated
-				-- Force a re-render: render_detail short-circuits when idx hasn't changed
+				-- Re-render the list row so its TYPE/SERVICE/MESSAGE/FILE
+				-- columns reflect the newly-fetched span data.
+				rerender_list_row(idx)
+				-- Force the detail re-render: render_detail short-circuits
+				-- when idx hasn't changed.
 				M.last_rendered_index = nil
 				render_detail(idx)
 			end
@@ -501,6 +506,36 @@ local function fit(s, w, align_right)
 	return align_right and (pad .. s) or (s .. pad)
 end
 
+local LIST_COLS = {
+	{ key = "count", header = "COUNT", width = 8, align_right = true },
+	{ key = "type", header = "TYPE", width = 30 },
+	{ key = "service", header = "SERVICE", width = 16 },
+	{ key = "message", header = "MESSAGE", width = 40 },
+	{ key = "file", header = "FILE", width = 32 },
+}
+
+local function row_string(values)
+	local parts = {}
+	for i, c in ipairs(LIST_COLS) do
+		parts[i] = fit(values[c.key], c.width, c.align_right)
+	end
+	return table.concat(parts, " │ ")
+end
+
+local function row_values_from_error(err)
+	local file_info = ""
+	if err.file then
+		file_info = err.file .. (err.line and (":" .. err.line) or "")
+	end
+	return {
+		count = tostring(err.occurrences or 0),
+		type = err.status or err.error_source or "unknown",
+		service = err.service or "unknown",
+		message = err.title or err.message or "Unknown error",
+		file = file_info,
+	}
+end
+
 -- Render the issue list as a single-header plain-text table.
 -- One header line at row 1, one data row per error starting at row 2,
 -- so cursor line N maps to error index (N - 1) deterministically.
@@ -510,46 +545,40 @@ function M.render_table(bufnr, errors)
 		return
 	end
 
-	local cols = {
-		{ key = "count", header = "COUNT", width = 8, align_right = true },
-		{ key = "type", header = "TYPE", width = 30 },
-		{ key = "service", header = "SERVICE", width = 16 },
-		{ key = "message", header = "MESSAGE", width = 40 },
-		{ key = "file", header = "FILE", width = 32 },
-	}
-
-	local function row_string(values)
-		local parts = {}
-		for i, c in ipairs(cols) do
-			parts[i] = fit(values[c.key], c.width, c.align_right)
-		end
-		return table.concat(parts, " │ ")
-	end
-
 	local lines = {}
 	-- Header
 	local header_values = {}
-	for _, c in ipairs(cols) do
+	for _, c in ipairs(LIST_COLS) do
 		header_values[c.key] = c.header
 	end
 	table.insert(lines, row_string(header_values))
 
 	-- Data rows
 	for _, err in ipairs(errors) do
-		local file_info = ""
-		if err.file then
-			file_info = err.file .. (err.line and (":" .. err.line) or "")
-		end
-		table.insert(lines, row_string({
-			count = tostring(err.occurrences or 0),
-			type = err.status or err.error_source or "unknown",
-			service = err.service or "unknown",
-			message = err.title or err.message or "Unknown error",
-			file = file_info,
-		}))
+		table.insert(lines, row_string(row_values_from_error(err)))
 	end
 
 	set_lines(bufnr, lines)
+end
+
+-- Replace a single row in the list (used after lazy span fetch enriches a
+-- row's data). Preserves the cursor position and the rest of the buffer.
+rerender_list_row = function(idx)
+	if not M.list_popup or not M.list_popup.bufnr then
+		return
+	end
+	if not vim.api.nvim_buf_is_valid(M.list_popup.bufnr) then
+		return
+	end
+	local err = M.errors[idx]
+	if not err then
+		return
+	end
+	local line = row_string(row_values_from_error(err))
+	local target = LIST_HEADER_LINES + idx -- 1-based buffer line
+	pcall(vim.api.nvim_buf_set_option, M.list_popup.bufnr, "modifiable", true)
+	pcall(vim.api.nvim_buf_set_lines, M.list_popup.bufnr, target - 1, target, false, { line })
+	pcall(vim.api.nvim_buf_set_option, M.list_popup.bufnr, "modifiable", false)
 end
 
 -- Close the entire UI

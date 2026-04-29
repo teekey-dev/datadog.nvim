@@ -17,7 +17,12 @@ function M:search(query, from_time, to_time, callback)
 		},
 	}
 
-	self._api:_request("POST", "error-tracking/issues/search", request_body, callback)
+	-- include=issue pulls the issue object into response.included[], where
+	-- the actual error metadata (first_seen, last_seen, error_type,
+	-- service, file_path, …) lives. Without it, response.data[].attributes
+	-- only carries impacted_sessions/impacted_users/total_count and every
+	-- detail field is missing.
+	self._api:_request("POST", "error-tracking/issues/search?include=issue", request_body, callback)
 end
 
 return function(api)

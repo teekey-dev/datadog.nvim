@@ -297,13 +297,24 @@ function M:fetch_errors(callback)
 
 		-- Collect issue IDs and the issue-level attributes we'll use as a
 		-- fallback when the per-issue spans search returns no representative
-		-- span (which happens when the issue's exemplar spans have aged out
-		-- of the spans index even though Error Tracking still tracks them).
-		if vim.g.datadog_debug and response.data and response.data[1] then
+		-- span. The error metadata (first_seen, last_seen, error_type,
+		-- service, file_path, …) lives in response.included[], not on
+		-- data[].attributes — data[] only carries the relationship pointer
+		-- and aggregate counts. Build an id→attrs lookup over included[]
+		-- so we can merge each row's issue object back in.
+		if vim.g.datadog_debug then
 			vim.notify(
-				"[Datadog Error Tracking] first issue: " .. vim.inspect(response.data[1]),
+				"[Datadog Error Tracking] data[1]: " .. vim.inspect(response.data and response.data[1])
+				.. "\nincluded[1]: " .. vim.inspect(response.included and response.included[1]),
 				vim.log.levels.INFO
 			)
+		end
+
+		local included_by_id = {}
+		for _, inc in ipairs(response.included or {}) do
+			if inc.id and inc.attributes then
+				included_by_id[inc.id] = inc.attributes
+			end
 		end
 
 		local issue_ids = {}
@@ -315,18 +326,21 @@ function M:fetch_errors(callback)
 				local issue_data = relationships.issue and relationships.issue.data or {}
 				local issue_id = issue_data.id or item.id
 				if issue_id then
+					-- Pull the real issue metadata from the included resource
+					-- referenced by relationships.issue.data.id.
+					local issue_attrs = included_by_id[issue_id] or {}
 					table.insert(issue_ids, {
 						id = issue_id,
 						total_count = total_count,
-						first_seen = attrs.first_seen,
-						last_seen = attrs.last_seen,
-						first_seen_version = attrs.first_seen_version,
-						last_seen_version = attrs.last_seen_version,
+						first_seen = issue_attrs.first_seen,
+						last_seen = issue_attrs.last_seen,
+						first_seen_version = issue_attrs.first_seen_version,
+						last_seen_version = issue_attrs.last_seen_version,
 						-- Issue-level metadata (used as fallback in formatter)
-						issue_type = attrs.type,
-						issue_message = attrs.error_template_message or attrs.message,
-						issue_service = attrs.service,
-						issue_file_path = attrs.file_path,
+						issue_type = issue_attrs.error_type,
+						issue_message = issue_attrs.error_message,
+						issue_service = issue_attrs.service,
+						issue_file_path = issue_attrs.file_path,
 					})
 				end
 			end
