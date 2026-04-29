@@ -203,11 +203,74 @@ local function on_detail_enter()
 	vim.notify("No file reference on this line", vim.log.levels.WARN)
 end
 
--- <CR> on the list pane: focus the detail pane (let the user explore the trace)
+-- <CR> on the list pane:
+--   * If the issue under the cursor already has span data, just focus the
+--     detail pane so the user can scroll the stack trace.
+--   * If not (tail issue that fell outside the top-N fan-out, or a span
+--     fetch that returned nothing on the initial fan-out), lazy-fetch
+--     the span on demand, re-render the detail pane, then focus it.
 local function on_list_enter()
-	if M.detail_popup and M.detail_popup.winid and vim.api.nvim_win_is_valid(M.detail_popup.winid) then
-		vim.api.nvim_set_current_win(M.detail_popup.winid)
+	if not M.list_popup or not M.list_popup.winid then
+		return
 	end
+	if not vim.api.nvim_win_is_valid(M.list_popup.winid) then
+		return
+	end
+
+	local cursor = vim.api.nvim_win_get_cursor(M.list_popup.winid)
+	local idx = list_line_to_index(cursor[1])
+	if not idx then
+		return
+	end
+
+	local err = M.errors[idx]
+	if not err then
+		return
+	end
+
+	local needs_fetch = (err.stack_trace == nil or err.stack_trace == "") and err._issue ~= nil
+
+	local function focus_detail()
+		if M.detail_popup and M.detail_popup.winid and vim.api.nvim_win_is_valid(M.detail_popup.winid) then
+			vim.api.nvim_set_current_win(M.detail_popup.winid)
+		end
+	end
+
+	if not needs_fetch then
+		focus_detail()
+		return
+	end
+
+	-- Show loading state in the detail pane while we fetch.
+	if M.detail_popup and M.detail_popup.bufnr then
+		set_lines(M.detail_popup.bufnr, { "", "  Fetching span for issue " .. err.id .. "…" })
+	end
+
+	local api_client = api.new(require("datadog").config)
+	api_client:fetch_span_for_error(err, function(updated, fetch_err)
+		vim.schedule(function()
+			if not M.detail_popup or not M.detail_popup.bufnr then
+				return
+			end
+
+			if fetch_err then
+				set_lines(M.detail_popup.bufnr, {
+					"",
+					"  Failed to fetch span: " .. (fetch_err.error or "unknown error"),
+				})
+				return
+			end
+
+			if updated then
+				M.errors[idx] = updated
+				-- Force a re-render: render_detail short-circuits when idx hasn't changed
+				M.last_rendered_index = nil
+				render_detail(idx)
+			end
+
+			focus_detail()
+		end)
+	end)
 end
 
 -- ============================================================================

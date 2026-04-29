@@ -91,6 +91,93 @@ function M:get_git_repository_id()
 	return nil
 end
 
+-- Format one error from its issue record, exemplar span (or nil), and trend
+-- (or nil). The "issue" record is the lightweight shape produced by the
+-- collection loop in fetch_errors and persisted onto the formatted error
+-- so a later lazy span fetch can re-format without redoing the search.
+function M:_format_error(issue, span, trend)
+	local formatted = {
+		id = issue.id,
+		occurrences = issue.total_count,
+		first_seen = issue.first_seen,
+		last_seen = issue.last_seen,
+		first_seen_version = issue.first_seen_version,
+		last_seen_version = issue.last_seen_version,
+		trend = trend,
+		-- Persist issue-level fallback fields so on-demand re-formatting
+		-- after a lazy span fetch can reuse them.
+		_issue = {
+			id = issue.id,
+			total_count = issue.total_count,
+			first_seen = issue.first_seen,
+			last_seen = issue.last_seen,
+			first_seen_version = issue.first_seen_version,
+			last_seen_version = issue.last_seen_version,
+			issue_type = issue.issue_type,
+			issue_message = issue.issue_message,
+			issue_service = issue.issue_service,
+			issue_file_path = issue.issue_file_path,
+		},
+	}
+
+	if span then
+		local attrs = span.attributes or {}
+		local custom = attrs.custom or {}
+		local custom_error = custom.error or {}
+
+		formatted.title = custom_error.message or custom.error_title or issue.issue_message or issue.issue_type or ""
+		formatted.message = custom_error.message or issue.issue_message or ""
+		formatted.service = attrs.service or issue.issue_service or self.config.service or "unknown"
+		formatted.status = custom_error.type or issue.issue_type or "unknown"
+		formatted.timestamp = attrs.start_timestamp or attrs.timestamp
+		formatted.span_last_seen = attrs.end_timestamp or attrs.timestamp
+		formatted.error_source = custom_error.type or issue.issue_type or "unknown"
+		formatted.file = custom_error.file or issue.issue_file_path or nil
+		formatted.line = custom_error.line or nil
+		formatted.stack_trace = custom_error.stack or custom.error_stack or ""
+		formatted.host = attrs.host or "unknown"
+		formatted.env = attrs.env or self.config.env or "unknown"
+	else
+		formatted.title = issue.issue_message or issue.issue_type or "(no exemplar span available)"
+		formatted.message = issue.issue_message or ""
+		formatted.service = issue.issue_service or self.config.service or "unknown"
+		formatted.status = issue.issue_type or "unknown"
+		formatted.error_source = issue.issue_type or "unknown"
+		formatted.file = issue.issue_file_path or nil
+		formatted.line = nil
+		formatted.stack_trace = ""
+		formatted.host = "unknown"
+		formatted.env = self.config.env or "unknown"
+	end
+
+	return formatted
+end
+
+-- Lazy-fetch the exemplar span for an error that didn't get one in the
+-- initial fan-out (tail issues outside the top-N cap). Re-formats the
+-- error with the new span and returns it via callback. Cache-aware via
+-- spans:search_by_issue.
+function M:fetch_span_for_error(error_record, callback)
+	if not error_record or not error_record._issue then
+		callback(nil, { error = "missing issue record on error" })
+		return
+	end
+
+	local time_range = self.config.query and self.config.query.time_range or "1w"
+	local from_time, to_time = self:_parse_time_range(time_range)
+	local from_iso = self:_to_iso(from_time)
+	local to_iso = self:_to_iso(to_time)
+
+	self.spans:search_by_issue(error_record._issue.id, from_iso, to_iso, function(span, err)
+		if err then
+			callback(nil, err)
+			return
+		end
+		-- Preserve the original trend (we don't refetch it here).
+		callback(self:_format_error(error_record._issue, span, error_record.trend), nil)
+	end)
+end
+
 -- Make HTTP request to Datadog API
 function M:_request(method, endpoint, data, callback)
 	local url = self:_build_url(endpoint)
@@ -272,50 +359,7 @@ function M:fetch_errors(callback)
 			for _, issue in ipairs(issue_ids) do
 				local span = spans_map[issue.id]
 				local trend = trends_map[issue.id]
-
-				local formatted = {
-					id = issue.id,
-					occurrences = issue.total_count,
-					first_seen = issue.first_seen,
-					last_seen = issue.last_seen,
-					first_seen_version = issue.first_seen_version,
-					last_seen_version = issue.last_seen_version,
-					trend = trend,
-				}
-
-				if span then
-					local attrs = span.attributes or {}
-					local custom = attrs.custom or {}
-					local custom_error = custom.error or {}
-
-					formatted.title = custom_error.message or custom.error_title or issue.issue_message or issue.issue_type or ""
-					formatted.message = custom_error.message or issue.issue_message or ""
-					formatted.service = attrs.service or issue.issue_service or self.config.service or "unknown"
-					formatted.status = custom_error.type or issue.issue_type or "unknown"
-					formatted.timestamp = attrs.start_timestamp or attrs.timestamp
-					formatted.span_last_seen = attrs.end_timestamp or attrs.timestamp
-					formatted.error_source = custom_error.type or issue.issue_type or "unknown"
-					formatted.file = custom_error.file or issue.issue_file_path or nil
-					formatted.line = custom_error.line or nil
-					formatted.stack_trace = custom_error.stack or custom.error_stack or ""
-					formatted.host = attrs.host or "unknown"
-					formatted.env = attrs.env or self.config.env or "unknown"
-				else
-					-- No span returned — populate from the Error Tracking
-					-- issue attributes we captured upstream.
-					formatted.title = issue.issue_message or issue.issue_type or "(no exemplar span available)"
-					formatted.message = issue.issue_message or ""
-					formatted.service = issue.issue_service or self.config.service or "unknown"
-					formatted.status = issue.issue_type or "unknown"
-					formatted.error_source = issue.issue_type or "unknown"
-					formatted.file = issue.issue_file_path or nil
-					formatted.line = nil
-					formatted.stack_trace = ""
-					formatted.host = "unknown"
-					formatted.env = self.config.env or "unknown"
-				end
-
-				table.insert(errors, formatted)
+				table.insert(errors, self:_format_error(issue, span, trend))
 			end
 
 			table.sort(errors, function(a, b)
