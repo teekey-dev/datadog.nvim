@@ -246,11 +246,15 @@ local function mount_side_by_side()
 		win_options = { wrap = false },
 	})
 
+	-- Float-mode layout pinned to the bottom of the editor. (Popup-children
+	-- imply float mode; the "position=bottom, size=N" shorthand is for
+	-- Split-mode layouts only.)
 	M.layout = Layout(
 		{
 			relative = "editor",
-			position = "bottom",
-			size = LAYOUT_HEIGHT,
+			anchor = "SW",
+			position = { row = "100%", col = 0 },
+			size = { width = "100%", height = LAYOUT_HEIGHT },
 		},
 		Layout.Box({
 			Layout.Box(M.list_popup, { size = "60%" }),
