@@ -25,6 +25,7 @@ function M.new(config)
 	-- Initialize API modules
 	self.error_tracking = require("datadog.api.error_tracking")(self)
 	self.spans = require("datadog.api.spans")(self)
+	self.spans_aggregate = require("datadog.api.spans_aggregate")(self)
 
 	return self
 end
@@ -236,19 +237,33 @@ function M:fetch_errors(callback)
 			return
 		end
 
-		-- Fetch span details for all issues in one call
-		self.spans:search_by_issues(issue_ids, from_iso, to_iso, function(spans_map, err)
-			if err then
+		-- Run spans search and trend aggregate in parallel; merge once both complete.
+		-- Aggregate failure is non-fatal — the trend line just shows "(unavailable)".
+		local spans_map = nil
+		local trends_map = nil
+		local spans_err = nil
+		local pending = 2
+
+		local function maybe_finish()
+			pending = pending - 1
+			if pending > 0 then
+				return
+			end
+
+			if spans_err then
 				if callback then
-					callback(nil, err)
+					callback(nil, spans_err)
 				end
 				return
 			end
 
-			-- Build formatted errors from spans map
+			spans_map = spans_map or {}
+			trends_map = trends_map or {}
+
 			local errors = {}
 			for _, issue in ipairs(issue_ids) do
 				local span = spans_map[issue.id]
+				local trend = trends_map[issue.id]
 
 				local formatted = {
 					id = issue.id,
@@ -257,6 +272,7 @@ function M:fetch_errors(callback)
 					last_seen = issue.last_seen,
 					first_seen_version = issue.first_seen_version,
 					last_seen_version = issue.last_seen_version,
+					trend = trend,
 				}
 
 				if span then
@@ -290,7 +306,6 @@ function M:fetch_errors(callback)
 				table.insert(errors, formatted)
 			end
 
-			-- Sort by occurrences descending
 			table.sort(errors, function(a, b)
 				return (a.occurrences or 0) > (b.occurrences or 0)
 			end)
@@ -298,6 +313,23 @@ function M:fetch_errors(callback)
 			if callback then
 				callback(errors, nil)
 			end
+		end
+
+		self.spans:search_by_issues(issue_ids, from_iso, to_iso, function(map, sp_err)
+			if sp_err then
+				spans_err = sp_err
+			else
+				spans_map = map
+			end
+			maybe_finish()
+		end)
+
+		self.spans_aggregate:aggregate_by_issues(issue_ids, from_iso, to_iso, function(map, ag_err)
+			if not ag_err then
+				trends_map = map
+			end
+			-- Aggregate errors are intentionally swallowed (rate limit, etc.)
+			maybe_finish()
 		end)
 	end)
 

@@ -76,6 +76,69 @@ function M.short_commit(hash)
 	return hash:sub(1, 8)
 end
 
+-- 8-step unicode block ramp for sparklines
+local SPARK_RAMP = { "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█" }
+
+-- Downsample a numeric array to at most `target_width` buckets by averaging
+local function downsample(values, target_width)
+	local n = #values
+	if n <= target_width then
+		return values
+	end
+	local out = {}
+	-- Simple bucket-by-floor: each output bucket averages a contiguous slice
+	for i = 1, target_width do
+		local lo = math.floor((i - 1) * n / target_width) + 1
+		local hi = math.floor(i * n / target_width)
+		if hi < lo then
+			hi = lo
+		end
+		local sum = 0
+		local count = 0
+		for j = lo, hi do
+			sum = sum + (values[j] or 0)
+			count = count + 1
+		end
+		out[i] = count > 0 and (sum / count) or 0
+	end
+	return out
+end
+
+-- Render a numeric series as a single-line sparkline using SPARK_RAMP.
+-- `width` caps the visual length (chars). Returns "" for empty input.
+function M.sparkline(values, width)
+	if not values or #values == 0 then
+		return ""
+	end
+	width = width or #values
+
+	local data = downsample(values, width)
+	local peak = 0
+	for _, v in ipairs(data) do
+		if v > peak then
+			peak = v
+		end
+	end
+	if peak <= 0 then
+		-- All zeros: show flat bottom row rather than empty string so the
+		-- caller can still see "this issue has been quiet"
+		return string.rep(SPARK_RAMP[1], #data)
+	end
+
+	local out = {}
+	for _, v in ipairs(data) do
+		-- Map [0, peak] -> [1, 8]; treat 0 as the lowest step rather than blank
+		local idx = math.floor((v / peak) * (#SPARK_RAMP - 1) + 0.5) + 1
+		if idx < 1 then
+			idx = 1
+		elseif idx > #SPARK_RAMP then
+			idx = #SPARK_RAMP
+		end
+		table.insert(out, SPARK_RAMP[idx])
+	end
+	return table.concat(out)
+end
+
 -- Highlight error levels in the buffer
 function M.setup_highlights()
 	-- Define highlight groups for different error statuses

@@ -77,6 +77,18 @@ local function build_detail_lines(err, width)
 	table.insert(lines, trunc(string.format(" last     %-12s %s", last_rel, last_commit)))
 	table.insert(lines, trunc(string.format(" count    %d", err.occurrences or 0)))
 
+	-- Trend sparkline (Stage 2). Reserve a label + " (peak N)" suffix; the rest is sparkline.
+	local trend = err.trend
+	if trend and trend.buckets and #trend.buckets > 0 then
+		local peak_label = string.format(" (peak %d)", trend.peak or 0)
+		local label = " trend    "
+		local spark_width = math.max(8, width - vim.fn.strdisplaywidth(label) - vim.fn.strdisplaywidth(peak_label))
+		local spark = utils.sparkline(trend.buckets, spark_width)
+		table.insert(lines, trunc(label .. spark .. peak_label))
+	else
+		table.insert(lines, trunc(" trend    (unavailable)"))
+	end
+
 	if err.file then
 		table.insert(lines, trunc(string.format(" at       %s:%s", err.file, err.line or "?")))
 	end

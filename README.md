@@ -12,7 +12,8 @@ line in your code.
 - Per-issue detail shows: error type & message, service/env/host, **first seen**
   and **last seen** times with the **commit hashes** (`first_seen_version` /
   `last_seen_version`) where the issue was first and most recently observed,
-  total occurrences, and the full stack trace
+  total occurrences, an inline **occurrence sparkline** (▁▂▅▇█▆▃) covering the
+  configured time range, and the full stack trace
 - `<CR>` on any stack-frame line jumps to that `file:line` (works for Java, Go,
   JS, Ruby, Rust, Kotlin, Python frames out of the box)
 - Issues are scoped to the current git repository (`@git.repository.id` filter),
@@ -113,11 +114,18 @@ The plugin can be configured with the following options:
    any optional `service` / `env` filters and the configured time range) to get
    the issues for this repo, including `first_seen` / `last_seen` timestamps and
    `first_seen_version` / `last_seen_version` commit hashes.
-3. For each issue, it calls `POST /api/v2/spans/events/search` (in one batched
-   request, OR'd over all issue IDs) to fetch a representative span carrying
-   the file/line, error message, and full stack trace.
-4. The two responses are merged and rendered: the left pane shows the issue
-   table; the right pane shows the detail of the selected issue.
+3. In parallel:
+   - `POST /api/v2/spans/events/search` (one batched request OR'd over all
+     issue IDs) fetches a representative span per issue carrying the
+     file/line, error message, and full stack trace.
+   - `POST /api/v2/spans/analytics/aggregate` returns a `count` timeseries
+     grouped by `@issue.id`, used to render the per-issue occurrence
+     sparkline. This endpoint is rate-limited to 300 requests/hour by Datadog;
+     if it fails (rate limit, etc.) the trend line shows `(unavailable)` and
+     the rest of the detail still renders.
+4. The responses are merged and rendered: the left pane shows the issue
+   table; the right pane shows the detail of the selected issue, updated
+   live as the cursor moves.
 5. `<Enter>` on a stack-frame line in the detail pane parses `file:line` from
    that line and opens the file at the matching line.
 
