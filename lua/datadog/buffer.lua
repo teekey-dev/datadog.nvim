@@ -24,12 +24,28 @@ local render_detail
 local close_layout
 local rerender_list_row
 
+-- nvim_buf_set_lines rejects any string containing \n or \r. Datadog
+-- error titles / messages can carry literal newlines (e.g., when the
+-- exception's toString includes a message + nested context separated by
+-- "\n"), so flatten them before they reach the API.
+local function flatten(s)
+	return (tostring(s or ""):gsub("[\r\n]+", " "))
+end
+
+local function flatten_all(lines)
+	local out = {}
+	for i, line in ipairs(lines) do
+		out[i] = flatten(line)
+	end
+	return out
+end
+
 local function set_lines(bufnr, lines)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
 		return
 	end
 	vim.api.nvim_buf_set_option(bufnr, "modifiable", true)
-	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, flatten_all(lines))
 	vim.api.nvim_buf_set_option(bufnr, "modifiable", false)
 end
 
@@ -574,7 +590,7 @@ rerender_list_row = function(idx)
 	if not err then
 		return
 	end
-	local line = row_string(row_values_from_error(err))
+	local line = flatten(row_string(row_values_from_error(err)))
 	local target = LIST_HEADER_LINES + idx -- 1-based buffer line
 	pcall(vim.api.nvim_buf_set_option, M.list_popup.bufnr, "modifiable", true)
 	pcall(vim.api.nvim_buf_set_lines, M.list_popup.bufnr, target - 1, target, false, { line })
