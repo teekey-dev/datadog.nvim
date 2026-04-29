@@ -6,8 +6,6 @@ local M = {}
 local api = require("datadog.api")
 local utils = require("datadog.utils")
 
-local Table = require("nui.table")
-
 -- UI state. list_popup / detail_popup keep the historical names (they used to
 -- be Nui Popups) but are now plain { bufnr, winid } records over native windows.
 M.list_popup = nil
@@ -19,7 +17,7 @@ M._autocmd_group = nil
 
 local MIN_LINES = 12
 local PANEL_HEIGHT = 20 -- fixed bottom panel height in rows
-local LIST_HEADER_LINES = 2 -- Nui Table renders a header row + separator
+local LIST_HEADER_LINES = 1 -- single header line; data rows are contiguous
 
 -- Forward declarations
 local render_detail
@@ -429,46 +427,66 @@ function M.refresh_errors()
 	end)
 end
 
--- Render the issue list table (Nui Table)
+-- Pad/truncate a string to exactly `w` display columns.
+local function fit(s, w, align_right)
+	s = tostring(s or "")
+	local dw = vim.fn.strdisplaywidth(s)
+	if dw > w then
+		return utils.truncate(s, w)
+	end
+	local pad = string.rep(" ", w - dw)
+	return align_right and (pad .. s) or (s .. pad)
+end
+
+-- Render the issue list as a single-header plain-text table.
+-- One header line at row 1, one data row per error starting at row 2,
+-- so cursor line N maps to error index (N - 1) deterministically.
 function M.render_table(bufnr, errors)
 	if #errors == 0 then
 		set_lines(bufnr, { " No errors found " })
 		return
 	end
 
-	local columns = {
-		{ accessor_key = "count", header = "COUNT", width = 8, align = "right" },
-		{ accessor_key = "type", header = "TYPE", width = 14 },
-		{ accessor_key = "service", header = "SERVICE", width = 16 },
-		{ accessor_key = "message", header = "MESSAGE", width = 30 },
-		{ accessor_key = "file", header = "FILE", width = 28 },
+	local cols = {
+		{ key = "count", header = "COUNT", width = 8, align_right = true },
+		{ key = "type", header = "TYPE", width = 30 },
+		{ key = "service", header = "SERVICE", width = 16 },
+		{ key = "message", header = "MESSAGE", width = 40 },
+		{ key = "file", header = "FILE", width = 32 },
 	}
 
-	local data = {}
-	for i, err in ipairs(errors) do
+	local function row_string(values)
+		local parts = {}
+		for i, c in ipairs(cols) do
+			parts[i] = fit(values[c.key], c.width, c.align_right)
+		end
+		return table.concat(parts, " │ ")
+	end
+
+	local lines = {}
+	-- Header
+	local header_values = {}
+	for _, c in ipairs(cols) do
+		header_values[c.key] = c.header
+	end
+	table.insert(lines, row_string(header_values))
+
+	-- Data rows
+	for _, err in ipairs(errors) do
 		local file_info = ""
 		if err.file then
-			file_info = err.file .. ":" .. (err.line or "")
+			file_info = err.file .. (err.line and (":" .. err.line) or "")
 		end
-		table.insert(data, {
-			index = i,
+		table.insert(lines, row_string({
 			count = tostring(err.occurrences or 0),
 			type = err.status or err.error_source or "unknown",
 			service = err.service or "unknown",
 			message = err.title or err.message or "Unknown error",
 			file = file_info,
-		})
+		}))
 	end
 
-	-- Nui Table renders directly into bufnr; the buf needs to be modifiable for it
-	pcall(vim.api.nvim_buf_set_option, bufnr, "modifiable", true)
-	local table_instance = Table({
-		bufnr = bufnr,
-		columns = columns,
-		data = data,
-	})
-	table_instance:render()
-	pcall(vim.api.nvim_buf_set_option, bufnr, "modifiable", false)
+	set_lines(bufnr, lines)
 end
 
 -- Close the entire UI
