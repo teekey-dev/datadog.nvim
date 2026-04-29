@@ -1,27 +1,24 @@
 -- Buffer management for datadog.nvim
--- Side-by-side issue list (left) + detail pane (right) inside a bottom layout.
+-- Side-by-side issue list (left) + detail pane (right) in a bottom split.
 
 local M = {}
 
 local api = require("datadog.api")
 local utils = require("datadog.utils")
 
-local Layout = require("nui.layout")
-local Popup = require("nui.popup")
 local Table = require("nui.table")
 
--- UI state
-M.layout = nil
+-- UI state. list_popup / detail_popup keep the historical names (they used to
+-- be Nui Popups) but are now plain { bufnr, winid } records over native windows.
 M.list_popup = nil
 M.detail_popup = nil
 M.errors = {}
 M.last_rendered_index = nil
-M._fallback_split = nil -- when terminal is too short for side-by-side
+M._prev_winid = nil -- window the user was in before opening the panel
 M._autocmd_group = nil
 
-local MIN_LINES = 25
-local LAYOUT_HEIGHT_PCT = "80%" -- of editor height; the panel dominates the screen
-local FALLBACK_HEIGHT = 20 -- used by the list-only fallback split when terminal is too short
+local MIN_LINES = 12
+local PANEL_HEIGHT = 20 -- fixed bottom panel height in rows
 local LIST_HEADER_LINES = 2 -- Nui Table renders a header row + separator
 
 -- Forward declarations
@@ -219,74 +216,86 @@ end
 -- Mount / unmount
 -- ============================================================================
 
-local function mount_side_by_side()
-	M.list_popup = Popup({
-		enter = true,
-		focusable = true,
-		border = {
-			style = "rounded",
-			text = { top = " Datadog Errors ", top_align = "center" },
-		},
-		buf_options = { modifiable = false, readonly = false },
-		win_options = { wrap = false, cursorline = true, number = false, relativenumber = false },
-	})
-
-	M.detail_popup = Popup({
-		enter = false,
-		focusable = true,
-		border = {
-			style = "rounded",
-			text = {
-				top = " Detail ",
-				top_align = "center",
-				bottom = " <CR> jump · q close ",
-				bottom_align = "right",
-			},
-		},
-		buf_options = { modifiable = false, readonly = false },
-		win_options = { wrap = false, cursorline = false, number = false, relativenumber = false },
-	})
-
-	-- Float-mode layout pinned to the bottom of the editor. (Popup-children
-	-- imply float mode; the "position=bottom, size=N" shorthand is for
-	-- Split-mode layouts only.)
-	M.layout = Layout(
-		{
-			relative = "editor",
-			anchor = "SW",
-			position = { row = "100%", col = 0 },
-			size = { width = "100%", height = LAYOUT_HEIGHT_PCT },
-		},
-		Layout.Box({
-			Layout.Box(M.list_popup, { size = "60%" }),
-			Layout.Box(M.detail_popup, { size = "40%" }),
-		}, { dir = "row" })
-	)
-
-	M.layout:mount()
+local function setup_pane_buffer(bufnr, name)
+	pcall(vim.api.nvim_buf_set_option, bufnr, "buftype", "nofile")
+	pcall(vim.api.nvim_buf_set_option, bufnr, "swapfile", false)
+	pcall(vim.api.nvim_buf_set_option, bufnr, "bufhidden", "wipe")
+	pcall(vim.api.nvim_buf_set_option, bufnr, "filetype", "datadog-" .. name)
+	pcall(vim.api.nvim_buf_set_name, bufnr, "datadog://" .. name)
 end
 
+local function setup_pane_window(winid, opts)
+	pcall(vim.api.nvim_win_set_option, winid, "wrap", false)
+	pcall(vim.api.nvim_win_set_option, winid, "number", false)
+	pcall(vim.api.nvim_win_set_option, winid, "relativenumber", false)
+	pcall(vim.api.nvim_win_set_option, winid, "signcolumn", "no")
+	pcall(vim.api.nvim_win_set_option, winid, "foldcolumn", "0")
+	pcall(vim.api.nvim_win_set_option, winid, "list", false)
+	pcall(vim.api.nvim_win_set_option, winid, "spell", false)
+	pcall(vim.api.nvim_win_set_option, winid, "cursorline", opts.cursorline or false)
+	pcall(vim.api.nvim_win_set_option, winid, "winfixheight", true)
+	pcall(vim.api.nvim_win_set_option, winid, "winfixwidth", true)
+end
+
+-- Open a fixed-height bottom split, then vsplit it for the detail pane.
+local function mount_side_by_side()
+	M._prev_winid = vim.api.nvim_get_current_win()
+
+	-- 1. Bottom horizontal split with a fresh scratch buffer for the list.
+	local list_bufnr = vim.api.nvim_create_buf(false, true)
+	vim.cmd("botright " .. PANEL_HEIGHT .. "split")
+	local list_winid = vim.api.nvim_get_current_win()
+	vim.api.nvim_win_set_buf(list_winid, list_bufnr)
+
+	setup_pane_buffer(list_bufnr, "errors")
+	setup_pane_window(list_winid, { cursorline = true })
+
+	-- 2. Vertical split inside the list window for the detail pane (right side).
+	local detail_bufnr = vim.api.nvim_create_buf(false, true)
+	-- "vertical rightbelow split" inherits height from the current (list) window
+	-- and creates the new window to its right. We control width with vert resize.
+	vim.cmd("vertical rightbelow split")
+	local detail_winid = vim.api.nvim_get_current_win()
+	vim.api.nvim_win_set_buf(detail_winid, detail_bufnr)
+
+	setup_pane_buffer(detail_bufnr, "detail")
+	setup_pane_window(detail_winid, { cursorline = false })
+
+	-- 3. Size the detail pane to ~40% of the editor width. After a vsplit each
+	--    half is half the original width; fix proportions explicitly.
+	local total_width = vim.o.columns
+	local detail_width = math.max(30, math.floor(total_width * 0.4))
+	pcall(vim.api.nvim_win_set_width, detail_winid, detail_width)
+
+	-- Focus the list pane on entry so the cursor/CursorMoved autocmd takes
+	-- effect immediately and the user can navigate without an extra <C-w>h.
+	vim.api.nvim_set_current_win(list_winid)
+
+	M.list_popup = { bufnr = list_bufnr, winid = list_winid }
+	M.detail_popup = { bufnr = detail_bufnr, winid = detail_winid }
+end
+
+-- Single-pane fallback for very short terminals.
 local function mount_fallback_list_only()
-	local Split = require("nui.split")
-	M._fallback_split = Split({
-		relative = "editor",
-		position = "bottom",
-		size = FALLBACK_HEIGHT,
-		border = {
-			style = "rounded",
-			text = { top = " Datadog Errors ", top_align = "center" },
-		},
-	})
-	M._fallback_split:mount()
-	-- Reuse list_popup-like accessors
-	M.list_popup = {
-		bufnr = M._fallback_split.bufnr,
-		winid = M._fallback_split.winid,
-		map = function(_, mode, key, fn, opts)
-			M._fallback_split:map(mode, key, fn, opts)
-		end,
-	}
+	M._prev_winid = vim.api.nvim_get_current_win()
+
+	local list_bufnr = vim.api.nvim_create_buf(false, true)
+	vim.cmd("botright " .. PANEL_HEIGHT .. "split")
+	local list_winid = vim.api.nvim_get_current_win()
+	vim.api.nvim_win_set_buf(list_winid, list_bufnr)
+
+	setup_pane_buffer(list_bufnr, "errors")
+	setup_pane_window(list_winid, { cursorline = true })
+
+	M.list_popup = { bufnr = list_bufnr, winid = list_winid }
 	M.detail_popup = nil
+end
+
+local function buf_keymap(bufnr, key, fn)
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+		return
+	end
+	vim.keymap.set("n", key, fn, { buffer = bufnr, noremap = true, silent = true })
 end
 
 local function setup_keymaps()
@@ -297,20 +306,18 @@ local function setup_keymaps()
 		M.refresh_errors()
 	end
 
-	-- List pane keymaps
-	if M.list_popup and M.list_popup.map then
-		M.list_popup:map("n", "q", close, { noremap = true })
-		M.list_popup:map("n", "<ESC>", close, { noremap = true })
-		M.list_popup:map("n", "r", refresh, { noremap = true })
-		M.list_popup:map("n", "<CR>", on_list_enter, { noremap = true })
+	if M.list_popup and M.list_popup.bufnr then
+		buf_keymap(M.list_popup.bufnr, "q", close)
+		buf_keymap(M.list_popup.bufnr, "<ESC>", close)
+		buf_keymap(M.list_popup.bufnr, "r", refresh)
+		buf_keymap(M.list_popup.bufnr, "<CR>", on_list_enter)
 	end
 
-	-- Detail pane keymaps (only present when side-by-side mounted)
-	if M.detail_popup and M.detail_popup.map then
-		M.detail_popup:map("n", "q", close, { noremap = true })
-		M.detail_popup:map("n", "<ESC>", close, { noremap = true })
-		M.detail_popup:map("n", "r", refresh, { noremap = true })
-		M.detail_popup:map("n", "<CR>", on_detail_enter, { noremap = true })
+	if M.detail_popup and M.detail_popup.bufnr then
+		buf_keymap(M.detail_popup.bufnr, "q", close)
+		buf_keymap(M.detail_popup.bufnr, "<ESC>", close)
+		buf_keymap(M.detail_popup.bufnr, "r", refresh)
+		buf_keymap(M.detail_popup.bufnr, "<CR>", on_detail_enter)
 	end
 end
 
@@ -325,51 +332,48 @@ local function setup_autocmds()
 		})
 	end
 
-	-- Close on resize if terminal becomes too short for side-by-side
-	vim.api.nvim_create_autocmd("VimResized", {
-		group = M._autocmd_group,
-		callback = function()
-			if vim.o.lines < MIN_LINES then
-				return -- live with it; the layout already shrinks
-			end
-		end,
-	})
+	-- If either pane's window is closed externally (:q, :close), tear the
+	-- whole panel down so we don't leak the other window.
+	local watched_bufnrs = {}
+	if M.list_popup then
+		table.insert(watched_bufnrs, M.list_popup.bufnr)
+	end
+	if M.detail_popup then
+		table.insert(watched_bufnrs, M.detail_popup.bufnr)
+	end
+	for _, bufnr in ipairs(watched_bufnrs) do
+		vim.api.nvim_create_autocmd("BufWipeout", {
+			group = M._autocmd_group,
+			buffer = bufnr,
+			callback = function()
+				vim.schedule(close_layout)
+			end,
+		})
+	end
 end
 
 -- Show the errors UI
 function M.show_errors_buffer()
-	-- If already mounted, just refocus
-	if M.layout or M._fallback_split then
+	-- If already mounted, refocus the list pane and bail.
+	if M.list_popup and M.list_popup.winid and vim.api.nvim_win_is_valid(M.list_popup.winid) then
+		vim.api.nvim_set_current_win(M.list_popup.winid)
 		return
 	end
 
-	if vim.o.lines < MIN_LINES then
+	-- Use single-pane fallback only when the terminal is genuinely too short
+	-- to make a side-by-side comfortable.
+	if vim.o.lines < MIN_LINES or vim.o.columns < 80 then
 		vim.notify(
 			string.format(
-				"Datadog: terminal has %d lines (need %d) — showing list only",
-				vim.o.lines,
-				MIN_LINES
+				"Datadog: terminal is %dx%d — showing list only",
+				vim.o.columns,
+				vim.o.lines
 			),
 			vim.log.levels.WARN
 		)
 		mount_fallback_list_only()
 	else
 		mount_side_by_side()
-	end
-
-	-- Buffer options on the list buffer
-	if M.list_popup and M.list_popup.bufnr then
-		pcall(vim.api.nvim_buf_set_option, M.list_popup.bufnr, "buftype", "nofile")
-		pcall(vim.api.nvim_buf_set_option, M.list_popup.bufnr, "swapfile", false)
-		pcall(vim.api.nvim_buf_set_option, M.list_popup.bufnr, "bufhidden", "hide")
-	end
-
-	-- Cursorline on the list window so the whole row highlights as the cursor
-	-- moves (the fallback split path doesn't go through Popup's win_options).
-	if M.list_popup and M.list_popup.winid and vim.api.nvim_win_is_valid(M.list_popup.winid) then
-		pcall(vim.api.nvim_win_set_option, M.list_popup.winid, "cursorline", true)
-		pcall(vim.api.nvim_win_set_option, M.list_popup.winid, "number", false)
-		pcall(vim.api.nvim_win_set_option, M.list_popup.winid, "relativenumber", false)
 	end
 
 	setup_keymaps()
@@ -473,22 +477,26 @@ close_layout = function()
 		pcall(vim.api.nvim_del_augroup_by_id, M._autocmd_group)
 		M._autocmd_group = nil
 	end
-	if M.layout then
-		pcall(function()
-			M.layout:unmount()
-		end)
-		M.layout = nil
+
+	for _, pane in ipairs({ M.list_popup, M.detail_popup }) do
+		if pane and pane.winid and vim.api.nvim_win_is_valid(pane.winid) then
+			pcall(vim.api.nvim_win_close, pane.winid, true)
+		end
+		if pane and pane.bufnr and vim.api.nvim_buf_is_valid(pane.bufnr) then
+			pcall(vim.api.nvim_buf_delete, pane.bufnr, { force = true })
+		end
 	end
-	if M._fallback_split then
-		pcall(function()
-			M._fallback_split:unmount()
-		end)
-		M._fallback_split = nil
+
+	-- Restore focus to the window the user was in before opening the panel.
+	if M._prev_winid and vim.api.nvim_win_is_valid(M._prev_winid) then
+		pcall(vim.api.nvim_set_current_win, M._prev_winid)
 	end
+
 	M.list_popup = nil
 	M.detail_popup = nil
 	M.errors = {}
 	M.last_rendered_index = nil
+	M._prev_winid = nil
 end
 
 function M.close_buffer()

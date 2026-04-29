@@ -47,8 +47,20 @@ function M:aggregate_by_issues(issue_ids, from_iso, to_iso, callback)
 
 	self._api:_request("POST", "spans/analytics/aggregate", request_body, function(response, err)
 		if err then
+			if vim.g.datadog_debug then
+				vim.notify("[Datadog Aggregate] error: " .. vim.inspect(err), vim.log.levels.WARN)
+			end
 			callback(nil, err)
 			return
+		end
+
+		if vim.g.datadog_debug then
+			-- Dump the first bucket so we can verify the shape we're parsing
+			local first = response and response.data and response.data[1]
+			vim.notify(
+				"[Datadog Aggregate] first bucket: " .. vim.inspect(first),
+				vim.log.levels.INFO
+			)
 		end
 
 		local trends_map = {}

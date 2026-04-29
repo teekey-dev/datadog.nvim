@@ -208,7 +208,10 @@ function M:fetch_errors(callback)
 			return
 		end
 
-		-- Collect issue IDs
+		-- Collect issue IDs and the issue-level attributes we'll use as a
+		-- fallback when the per-issue spans search returns no representative
+		-- span (which happens when the issue's exemplar spans have aged out
+		-- of the spans index even though Error Tracking still tracks them).
 		local issue_ids = {}
 		for _, item in ipairs(response.data) do
 			local attrs = item.attributes or {}
@@ -225,6 +228,11 @@ function M:fetch_errors(callback)
 						last_seen = attrs.last_seen,
 						first_seen_version = attrs.first_seen_version,
 						last_seen_version = attrs.last_seen_version,
+						-- Issue-level metadata (used as fallback in formatter)
+						issue_type = attrs.type,
+						issue_message = attrs.error_template_message or attrs.message,
+						issue_service = attrs.service,
+						issue_file_path = attrs.file_path,
 					})
 				end
 			end
@@ -280,24 +288,28 @@ function M:fetch_errors(callback)
 					local custom = attrs.custom or {}
 					local custom_error = custom.error or {}
 
-					formatted.title = custom_error.message or custom.error_title or ""
-					formatted.message = custom_error.message or ""
-					formatted.service = attrs.service or self.config.service or "unknown"
-					formatted.status = custom_error.type or "unknown"
+					formatted.title = custom_error.message or custom.error_title or issue.issue_message or issue.issue_type or ""
+					formatted.message = custom_error.message or issue.issue_message or ""
+					formatted.service = attrs.service or issue.issue_service or self.config.service or "unknown"
+					formatted.status = custom_error.type or issue.issue_type or "unknown"
 					formatted.timestamp = attrs.start_timestamp or attrs.timestamp
 					formatted.span_last_seen = attrs.end_timestamp or attrs.timestamp
-					formatted.error_source = custom_error.type or "unknown"
-					formatted.file = custom_error.file or nil
+					formatted.error_source = custom_error.type or issue.issue_type or "unknown"
+					formatted.file = custom_error.file or issue.issue_file_path or nil
 					formatted.line = custom_error.line or nil
 					formatted.stack_trace = custom_error.stack or custom.error_stack or ""
 					formatted.host = attrs.host or "unknown"
 					formatted.env = attrs.env or self.config.env or "unknown"
 				else
-					formatted.title = "Unknown error"
-					formatted.message = ""
-					formatted.service = self.config.service or "unknown"
-					formatted.status = "unknown"
-					formatted.error_source = "unknown"
+					-- No span returned — populate from the Error Tracking
+					-- issue attributes we captured upstream.
+					formatted.title = issue.issue_message or issue.issue_type or "(no exemplar span available)"
+					formatted.message = issue.issue_message or ""
+					formatted.service = issue.issue_service or self.config.service or "unknown"
+					formatted.status = issue.issue_type or "unknown"
+					formatted.error_source = issue.issue_type or "unknown"
+					formatted.file = issue.issue_file_path or nil
+					formatted.line = nil
 					formatted.stack_trace = ""
 					formatted.host = "unknown"
 					formatted.env = self.config.env or "unknown"
